@@ -1,5 +1,5 @@
+use indicatif::ProgressBar;
 use pnet::packet::ip::IpNextHeaderProtocols;
-use pnet::packet::ipv4::Ipv4OptionNumbers::TR;
 use pnet::packet::{
     Packet,
     icmp::{IcmpTypes, echo_request::MutableEchoRequestPacket},
@@ -8,7 +8,6 @@ use pnet::transport::{
     TransportChannelType, TransportProtocol, icmp_packet_iter, transport_channel,
 };
 use pnet::util::checksum;
-use std::cmp::max;
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -18,12 +17,12 @@ use std::time::{Duration, Instant};
 
 static TIMEOUT: Duration = Duration::from_secs(3);
 // static MAX_PINGS_PER_SECOND: u64 = 10000;
-static SEND_DELAY_NANOS: Duration = Duration::from_nanos(500);
+static SEND_DELAY_NANOS: Duration = Duration::from_micros(10);
 
 use crate::online_scan::PingResult;
 
-pub fn ping_scan(hosts: Vec<IpAddr>) -> Result<Vec<PingResult>, Box<dyn std::error::Error>> {
-    let results = Arc::new(Mutex::new(Vec::<PingResult>::new()));
+pub fn ping_scan(hosts: Vec<IpAddr>) -> Result<Vec<IpAddr>, Box<dyn std::error::Error>> {
+    let results = Arc::new(Mutex::new(Vec::<IpAddr>::new()));
 
     // Create a receiver channel for ICMP packets
     let (_, mut rx) = transport_channel(
@@ -45,17 +44,24 @@ pub fn ping_scan(hosts: Vec<IpAddr>) -> Result<Vec<PingResult>, Box<dyn std::err
         let mut iter = icmp_packet_iter(&mut rx);
         let start_time = Instant::now();
         let mut finish_sending_time: Option<Instant> = None;
+        // let mut pb: Option<ProgressBar> = None;
 
         // Keep receiving until timeout or all hosts are accounted for
         loop {
             // Stop reciving loop if timeout is reached
             // let time = finished_sending_time;
-            if finish_sending_time.is_some() && finish_sending_time.unwrap().elapsed() >= TIMEOUT {
-                break;
+            if finish_sending_time.is_some() {
+                let delay = finish_sending_time.unwrap().elapsed();
+                // pb.as_ref().unwrap().set_position(delay.as_millis() as u64);
+                if delay >= TIMEOUT {
+                    // pb.unwrap().finish_and_clear();
+                    break;
+                }
             } else if finish_sending_time.is_none()
                 && recv_finished_sending_time.load(Ordering::Relaxed)
             {
                 finish_sending_time = Some(Instant::now());
+                // pb = Some(ProgressBar::new(TIMEOUT.as_millis() as u64));
                 println!("Waiting {} seconds for timeout...", TIMEOUT.as_secs())
             }
             // if time.is_some() {
@@ -65,7 +71,7 @@ pub fn ping_scan(hosts: Vec<IpAddr>) -> Result<Vec<PingResult>, Box<dyn std::err
             //     break;
             // };
 
-            match iter.next_with_timeout(Duration::from_millis(1)) {
+            match iter.next_with_timeout(Duration::from_millis(3)) {
                 Ok(Some((packet, _))) => {
                     if packet.get_icmp_type() == IcmpTypes::EchoReply {
                         let payload = packet.payload();
@@ -79,11 +85,12 @@ pub fn ping_scan(hosts: Vec<IpAddr>) -> Result<Vec<PingResult>, Box<dyn std::err
                         if let Some(host) = host_option {
                             let mut results = recv_results.lock().unwrap();
                             let response_time = start_time.elapsed();
-                            results.push(PingResult {
-                                host,
-                                is_up: true,
-                                response_time: Some(response_time),
-                            });
+                            results.push(host);
+                            // results.push(PingResult {
+                            //     host,
+                            //     is_up: true,
+                            //     response_time: Some(response_time),
+                            // });
 
                             // println!("Up! {0} {1}ms", host, response_time.as_millis());
                         }
@@ -98,9 +105,10 @@ pub fn ping_scan(hosts: Vec<IpAddr>) -> Result<Vec<PingResult>, Box<dyn std::err
     // Spawn sender threads
 
     let sender_requests = Arc::clone(&requests);
-    let sender_results = Arc::clone(&results);
+    // let sender_results = Arc::clone(&results);
     let sender_finished_sending_time = Arc::clone(&finished_sending_time);
     let sender_handle = thread::spawn(move || {
+        let pb = ProgressBar::new(hosts.len() as u64);
         // let mut last_send_time = Instant::now();
         for (i, host) in hosts.iter().enumerate() {
             let host_clone = host.clone();
@@ -114,26 +122,17 @@ pub fn ping_scan(hosts: Vec<IpAddr>) -> Result<Vec<PingResult>, Box<dyn std::err
                 ids.insert(identifier, host_clone);
             }
 
-            let response = send_ping(host_clone, identifier);
-
-            match response {
-                Ok(_) => {}
-                Err(_) => {
-                    let mut results = sender_results.lock().unwrap();
-                    results.push(PingResult {
-                        host: host_clone,
-                        is_up: false,
-                        response_time: None,
-                    });
-                }
-            }
+            let _ = send_ping(host_clone, identifier);
 
             // let now = Instant::now();
             // let delay = MAX_RATE_NANOS - last_send_time.duration_since(now).as_nanos() as u64;
             // last_send_time = now;
+            if (i % 16) == 0 {
+                pb.inc(16);
+            }
             thread::sleep(SEND_DELAY_NANOS);
         }
-        println!("Finished Sending!");
+        pb.finish_and_clear();
 
         sender_finished_sending_time.swap(true, Ordering::Relaxed);
     });

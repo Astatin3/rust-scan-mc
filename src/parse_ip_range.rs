@@ -3,6 +3,8 @@ use std::{
     str::FromStr,
 };
 
+use rand::{rng, seq::SliceRandom};
+
 // static MAX_HOSTS: u32 = 1024;
 
 /// Parse a comma-separated list of IP targets
@@ -29,6 +31,8 @@ pub fn parse_ip_targets(targets: &str) -> Result<Vec<IpAddr>, Box<dyn std::error
             ips.push(ip);
         }
     }
+
+    ips.shuffle(&mut rng());
 
     Ok(ips)
 }
