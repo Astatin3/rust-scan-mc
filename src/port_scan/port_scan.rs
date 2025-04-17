@@ -1,4 +1,4 @@
-use std::{collections::HashMap, net::IpAddr};
+use std::net::IpAddr;
 
 use crate::database::StringRow;
 

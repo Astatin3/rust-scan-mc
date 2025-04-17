@@ -6,13 +6,12 @@ use std::thread;
 use std::time::Duration;
 
 use indicatif::ProgressBar;
-use pnet::datalink::{self, NetworkInterface};
+use pnet::datalink::{self};
 use pnet::packet::ip::IpNextHeaderProtocols;
-use pnet::packet::tcp::{MutableTcpPacket, TcpFlags, TcpOption, TcpPacket};
+use pnet::packet::tcp::{MutableTcpPacket, TcpFlags, TcpPacket};
 use pnet::packet::{Packet, tcp};
 use pnet::transport::{self, TransportChannelType};
-use pnet::util::checksum;
-use rand::{random_range, random_ratio};
+use rand::random_range;
 
 use super::port_scan::ScanResult;
 
@@ -129,9 +128,13 @@ pub fn tcp_scan(targets: Vec<IpAddr>, ports: Vec<i32>, timeout: Duration) -> Vec
     let results_map = results.lock().unwrap();
     targets
         .iter()
-        .map(|ip| ScanResult {
-            ip: *ip,
-            open_ports: results_map.get(ip).cloned().unwrap_or_default(),
+        .map(|ip| {
+            let mut open_ports = results_map.get(ip).cloned().unwrap_or_default();
+            open_ports.sort();
+            ScanResult {
+                ip: *ip,
+                open_ports,
+            }
         })
         .collect()
 }

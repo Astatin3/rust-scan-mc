@@ -19,8 +19,6 @@ static TIMEOUT: Duration = Duration::from_secs(3);
 // static MAX_PINGS_PER_SECOND: u64 = 10000;
 static SEND_DELAY_NANOS: Duration = Duration::from_micros(10);
 
-use crate::online_scan::PingResult;
-
 pub fn ping_scan(hosts: Vec<IpAddr>) -> Result<Vec<IpAddr>, Box<dyn std::error::Error>> {
     let results = Arc::new(Mutex::new(Vec::<IpAddr>::new()));
 
@@ -42,7 +40,6 @@ pub fn ping_scan(hosts: Vec<IpAddr>) -> Result<Vec<IpAddr>, Box<dyn std::error::
     let recv_finished_sending_time = Arc::clone(&finished_sending_time);
     let receiver_handle = thread::spawn(move || {
         let mut iter = icmp_packet_iter(&mut rx);
-        let start_time = Instant::now();
         let mut finish_sending_time: Option<Instant> = None;
         // let mut pb: Option<ProgressBar> = None;
 
@@ -84,7 +81,6 @@ pub fn ping_scan(hosts: Vec<IpAddr>) -> Result<Vec<IpAddr>, Box<dyn std::error::
 
                         if let Some(host) = host_option {
                             let mut results = recv_results.lock().unwrap();
-                            let response_time = start_time.elapsed();
                             results.push(host);
                             // results.push(PingResult {
                             //     host,
