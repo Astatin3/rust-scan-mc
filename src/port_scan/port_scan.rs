@@ -20,18 +20,7 @@ impl ScanResult {
     pub fn to_string_row(&self) -> StringRow {
         StringRow {
             id: self.ip.to_string(),
-            values: vec![join_nums(&self.open_ports, ",")],
+            ports: (*self.open_ports).to_vec(),
         }
     }
-}
-
-fn join_nums(nums: &Vec<i32>, sep: &str) -> String {
-    // 1. Convert numbers to strings
-    let str_nums: Vec<String> = nums
-        .iter()
-        .map(|n| n.to_string()) // map every integer to a string
-        .collect(); // collect the strings into the vector
-
-    // 2. Join the strings. There's already a function for this.
-    str_nums.join(sep)
 }

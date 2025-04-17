@@ -1,11 +1,9 @@
 use std::{net::IpAddr, sync::Arc, time::Instant};
 
-use rocksdb::{Cache, ColumnFamily, DB, IteratorMode, Options, WriteBatch};
+use rocksdb::{Cache, ColumnFamily, IteratorMode, Options, WriteBatch, DB};
 use serde::{Deserialize, Serialize};
 
 use crate::port_scan::port_scan::ScanResult;
-
-static COLUMN_COUNT: usize = 5;
 
 // Global settings for optimal performance
 const BLOCK_CACHE_SIZE_MB: usize = 512; // 512MB block cache
@@ -21,25 +19,49 @@ pub struct ResultDatabase {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct StringRow {
-    pub id: String,          // Row identifier
-    pub values: Vec<String>, // Array of string values
+    pub id: String,      // Row identifier
+    pub ports: Vec<i32>, // Array of string values
 }
 
 impl StringRow {
     pub fn to_string(&self) -> String {
         let mut str = "".to_string();
 
-        str += format!("Row ID: {}, Values: [", self.id).as_str();
-        for (i, value) in self.values.iter().enumerate() {
-            if i > 0 {
-                str += ", ";
-            }
-            str += format!("{}: \"{}\"", i, value).as_str();
-        }
-        str += "]";
+        str += format!("{} - ports: [{}]", self.id, join_nums(&self.ports, ",")).as_str();
 
         str
     }
+    pub fn ports_to_string(&self) -> String {
+        return join_nums(&self.ports, ",");
+    }
+}
+
+pub fn join_nums(nums: &Vec<i32>, sep: &str) -> String {
+    // 1. Convert numbers to strings
+    let str_nums: Vec<String> = nums
+        .iter()
+        .map(|n| n.to_string()) // map every integer to a string
+        .collect(); // collect the strings into the vector
+
+    // 2. Join the strings. There's already a function for this.
+    str_nums.join(sep)
+}
+
+pub fn split_nums(str: &str, sep: &str) -> Vec<i32> {
+    if str.is_empty() {
+        return vec![];
+    };
+
+    return str
+        .split(sep)
+        .map(|n| {
+            if let Ok(num) = n.parse::<i32>() {
+                return num;
+            } else {
+                return 0;
+            }
+        })
+        .collect();
 }
 
 impl ResultDatabase {
@@ -74,13 +96,7 @@ impl ResultDatabase {
 
         // Define column families for different indexes
 
-        let mut column_families = vec!["default".to_string()]; // Main data store
-
-        // Add column families for each column index we might want to search by
-        // (for demo, we'll create indexes for 5 potential columns)
-        for i in 0..COLUMN_COUNT {
-            column_families.push(format!("col{}_idx", i).to_string());
-        }
+        let column_families = vec!["default".to_string(), "ports".to_string()];
 
         Self {
             path: path.to_string(),
@@ -98,7 +114,7 @@ impl ResultDatabase {
         for result in results {
             string_rows.push(StringRow {
                 id: result.to_string(),
-                values: vec![],
+                ports: vec![],
             });
         }
 
@@ -120,14 +136,8 @@ impl ResultDatabase {
 
     pub fn save_rows(&self, string_rows: Vec<StringRow>) -> Result<(), Box<dyn std::error::Error>> {
         let db = Arc::new(DB::open_cf(&self.options, &self.path, &self.columns)?);
-        let cf_default = db.cf_handle("default").unwrap();
-
-        // Get handles to column index families
-        let mut cf_columns = Vec::new();
-        for i in 0..3 {
-            let cf = db.cf_handle(&format!("col{}_idx", i)).unwrap();
-            cf_columns.push(cf);
-        }
+        let cf_default = db.cf_handle(&self.columns[0]).unwrap();
+        let cf_ports = db.cf_handle(&self.columns[1]).unwrap();
 
         let start = Instant::now();
         let length = string_rows.len();
@@ -142,7 +152,6 @@ impl ResultDatabase {
         let elapsed = {
             let db_ref = Arc::clone(&db);
             let cf_default_ref = cf_default;
-            let cf_columns_ref = &cf_columns;
 
             // Create batches in parallel but write them sequentially
             let batches: Vec<WriteBatch> = chunks
@@ -161,19 +170,9 @@ impl ResultDatabase {
                         // Store in main column family
                         batch.put_cf(cf_default_ref, row.id.as_bytes(), &data);
 
-                        // Create indexes only for searchable columns (0-2)
-                        for (col_idx, value) in row.values.iter().enumerate() {
-                            if col_idx < cf_columns_ref.len() {
-                                // Create search-friendly keys: value:rowid
-                                // Use minimal escaping for better performance
-                                let idx_key = format!("{}:{}", fast_escape(value), row.id);
-                                batch.put_cf(
-                                    cf_columns_ref[col_idx],
-                                    idx_key.as_bytes(),
-                                    row.id.as_bytes(),
-                                );
-                            }
-                        }
+                        let idx_key =
+                            format!("{}:{}", fast_escape(row.ports_to_string().as_str()), row.id);
+                        batch.put_cf(cf_ports, idx_key.as_bytes(), row.id.as_bytes());
                     }
 
                     batch
@@ -304,17 +303,19 @@ fn decode_row_binary(key: &str, data: &[u8]) -> Option<StringRow> {
 
     Some(StringRow {
         id: key.to_string(),
-        values,
+        ports: split_nums(values[0].as_str(), ","),
     })
 }
 
 // Binary encoding of row data for maximum performance
 fn encode_row_binary(buf: &mut Vec<u8>, row: &StringRow) {
+    let values = vec![row.ports_to_string()];
+
     // Write number of values
-    buf.extend_from_slice(&(row.values.len() as u32).to_le_bytes());
+    buf.extend_from_slice(&(values.len() as u32).to_le_bytes());
 
     // Write each value
-    for value in &row.values {
+    for value in vec![row.ports_to_string()] {
         let value_bytes = value.as_bytes();
         buf.extend_from_slice(&(value_bytes.len() as u32).to_le_bytes());
         buf.extend_from_slice(value_bytes);

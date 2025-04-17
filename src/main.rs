@@ -164,6 +164,7 @@ fn scan(
                 ];
 
                 let tcp_results = tcp_scan::tcp_scan(up_hosts, tcp_ports, Duration::from_secs(3));
+                println!("Saving Data...");
                 let _ = database.add_tcp_results(&tcp_results);
             }
         }
