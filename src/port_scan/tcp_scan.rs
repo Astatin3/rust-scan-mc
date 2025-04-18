@@ -1,9 +1,11 @@
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 use std::str::FromStr;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use indicatif::ProgressBar;
 use pnet::datalink::{self};
@@ -62,15 +64,40 @@ pub fn tcp_scan(targets: Vec<IpAddr>, ports: Vec<i32>, timeout: Duration) -> Vec
         }
     }
 
+    let finished_sending_time = Arc::new(AtomicBool::new(false));
+
     let receiver_results = Arc::clone(&results);
+    let receiver_finished_sending_time = Arc::clone(&finished_sending_time);
     let receiver_handle = thread::spawn(move || {
         let start_time = std::time::Instant::now();
+        let mut finish_sending_time: Option<Instant> = None;
 
-        while start_time.elapsed() < timeout {
+        let mut tmp_results: Vec<(TcpPacket<'_>, IpAddr)> = Vec::new();
+
+        let mut iter = transport::tcp_packet_iter(&mut rx);
+        loop {
+            // if start_time.elapsed() >= timeout {
+            //     break;
+            // };
+
+            if finish_sending_time.is_some() {
+                let delay = finish_sending_time.unwrap().elapsed();
+                // pb.as_ref().unwrap().set_position(delay.as_millis() as u64);
+                if delay >= timeout {
+                    // pb.unwrap().finish_and_clear();
+                    break;
+                }
+            } else if finish_sending_time.is_none()
+                && receiver_finished_sending_time.load(std::sync::atomic::Ordering::Relaxed)
+            {
+                finish_sending_time = Some(Instant::now());
+                // pb = Some(ProgressBar::new(TIMEOUT.as_millis() as u64));
+                println!("Waiting {} seconds for timeout...", timeout.as_secs())
+            }
+
             // println!("loop");
-            let mut iter = transport::tcp_packet_iter(&mut rx);
 
-            match iter.next_with_timeout(timeout) {
+            match iter.next_with_timeout(Duration::from_millis(3)) {
                 Ok(Some((packet, addr))) => {
                     if let Some(tcp) = TcpPacket::new(packet.packet()) {
                         // Check for SYN+ACK flags (indicating open port)
@@ -87,15 +114,14 @@ pub fn tcp_scan(targets: Vec<IpAddr>, ports: Vec<i32>, timeout: Duration) -> Vec
                         }
                     }
                 }
-                Ok(None) => {
-                    break;
-                }
+                Ok(None) => {}
                 Err(_) => {
-                    // Just continue on errors
-                    thread::sleep(Duration::from_millis(1));
+                    break;
                 }
             }
         }
+
+        // for (packet, addr) in tmp_results {}
     });
 
     let pb = ProgressBar::new((targets.len() * ports.len()) as u64);
@@ -116,6 +142,7 @@ pub fn tcp_scan(targets: Vec<IpAddr>, ports: Vec<i32>, timeout: Duration) -> Vec
 
     // println!("Using IP: {}", source_ip.to_string());
 
+    let sender_finished_sending_time = Arc::clone(&finished_sending_time);
     for target in &targets {
         for port in &ports {
             // let source_ip = Ipv4Addr::from_bits(random_range(0..=(0xffffffff)));
@@ -154,7 +181,7 @@ pub fn tcp_scan(targets: Vec<IpAddr>, ports: Vec<i32>, timeout: Duration) -> Vec
             thread::sleep(Duration::from_micros(100));
         }
     }
-
+    sender_finished_sending_time.swap(true, std::sync::atomic::Ordering::Relaxed);
     // Wait for receiver to finish
     // thread::sleep(timeout);
     receiver_handle.join().unwrap();
