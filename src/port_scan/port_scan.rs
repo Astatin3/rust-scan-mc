@@ -1,26 +1,26 @@
 use std::net::IpAddr;
 
-use crate::database::StringRow;
+use crate::database::DatabaseResult;
 
 #[derive(Debug, Clone)]
-pub struct ScanResult {
+pub struct PortScanResult {
     pub ip: IpAddr,
     pub open_ports: Vec<i32>,
-    // pub data: HashMap<i32, Vec<u8>>,
 }
 
-impl ScanResult {
+impl PortScanResult {
     pub fn new(ip: IpAddr) -> Self {
-        ScanResult {
+        PortScanResult {
             ip,
             open_ports: Vec::new(),
             // data: HashMap::new(),
         }
     }
-    pub fn to_string_row(&self) -> StringRow {
-        StringRow {
+    pub fn to_database(&self) -> DatabaseResult {
+        DatabaseResult {
             id: self.ip.to_string(),
             ports: (*self.open_ports).to_vec(),
+            services: String::new(),
         }
     }
 }

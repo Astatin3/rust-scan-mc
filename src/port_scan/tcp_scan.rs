@@ -6,28 +6,23 @@ use std::thread;
 use std::time::Duration;
 
 use indicatif::ProgressBar;
-use pnet::datalink::linux::interfaces;
 use pnet::datalink::{self};
 use pnet::packet::ip::IpNextHeaderProtocols;
 use pnet::packet::tcp::{MutableTcpPacket, TcpFlags, TcpPacket};
-use pnet::packet::{tcp, Packet};
+use pnet::packet::{Packet, tcp};
 use pnet::transport::{self, TransportChannelType, TransportSender};
 use rand::random_range;
 
-use super::port_scan::ScanResult;
+use super::port_scan::PortScanResult;
 
 fn std_to_pnet_ipv4(previous: &IpAddr) -> Ipv4Addr {
     Ipv4Addr::from_str(previous.to_string().as_str()).unwrap()
 }
 
 // Main scanning function
-pub fn tcp_scan(targets: Vec<IpAddr>, ports: Vec<i32>, timeout: Duration) -> Vec<ScanResult> {
-    // Find network interface
-    let interfaces = datalink::interfaces();
-
-    println!("{}", interfaces.len());
-
-    let interface = interfaces
+pub fn tcp_scan(targets: Vec<IpAddr>, ports: Vec<i32>, timeout: Duration) -> Vec<PortScanResult> {
+    // Search for VPN connection and fall back to regular
+    let interface = datalink::interfaces()
         .into_iter()
         .find(|iface| {
             iface.is_up()
@@ -37,6 +32,14 @@ pub fn tcp_scan(targets: Vec<IpAddr>, ports: Vec<i32>, timeout: Duration) -> Vec
                 && iface.is_running()
                 && iface.is_point_to_point()
         })
+        .or(datalink::interfaces().into_iter().find(|iface| {
+            iface.is_up()
+                && !iface.is_loopback()
+                && !iface.ips.is_empty()
+                && !iface.is_dormant()
+                && iface.is_running()
+                && !iface.is_point_to_point()
+        }))
         .expect("No valid network interface found");
 
     // Create transport channel for sending and receiving
@@ -97,19 +100,21 @@ pub fn tcp_scan(targets: Vec<IpAddr>, ports: Vec<i32>, timeout: Duration) -> Vec
 
     let pb = ProgressBar::new((targets.len() * ports.len()) as u64);
 
-    println!("{:?}", interface.ips);
+    // println!("{:?}", interface.ips);
 
-    let source_ip = interface
-        .ips
-        .iter()
-        .find(|ip| ip.is_ipv4())
-        .expect("No IPv4 address found")
-        .ip();
+    let source_ip = std_to_pnet_ipv4(
+        &interface
+            .ips
+            .iter()
+            .find(|ip| ip.is_ipv4())
+            .expect("No IPv4 address found")
+            .ip(),
+    );
 
     // let source_ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
     // let source_ip = IpAddr::V4(Ipv4Addr::new(10, 0, 70, 4));
 
-    println!("Using IP: {}", source_ip.to_string());
+    // println!("Using IP: {}", source_ip.to_string());
 
     for target in &targets {
         for port in &ports {
@@ -134,7 +139,11 @@ pub fn tcp_scan(targets: Vec<IpAddr>, ports: Vec<i32>, timeout: Duration) -> Vec
             // Calculate checksum
             let checksum = tcp::ipv4_checksum(
                 &tcp_header.to_immutable(),
-                &std_to_pnet_ipv4(&source_ip),
+                if !target.is_loopback() {
+                    &source_ip
+                } else {
+                    &Ipv4Addr::LOCALHOST
+                },
                 &std_to_pnet_ipv4(&target),
             );
             tcp_header.set_checksum(checksum);
@@ -158,7 +167,7 @@ pub fn tcp_scan(targets: Vec<IpAddr>, ports: Vec<i32>, timeout: Duration) -> Vec
             let mut open_ports = results_map.get(ip).cloned().unwrap_or_default();
             open_ports.sort();
             open_ports.dedup();
-            ScanResult {
+            PortScanResult {
                 ip: *ip,
                 open_ports,
             }

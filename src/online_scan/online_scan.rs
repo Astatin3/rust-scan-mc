@@ -2,7 +2,7 @@ use std::{net::IpAddr, time::Duration};
 
 use serde::{Deserialize, Serialize};
 
-use crate::database::StringRow;
+use crate::database::DatabaseResult;
 
 // Structure to hold ping results
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -21,10 +21,11 @@ impl PingResult {
         }
     }
 
-    pub fn to_string_row(&self) -> StringRow {
-        StringRow {
+    pub fn to_database(&self) -> DatabaseResult {
+        DatabaseResult {
             id: self.host.to_string(),
             ports: vec![],
+            services: String::new(),
         }
     }
 }

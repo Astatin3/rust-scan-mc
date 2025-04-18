@@ -1,9 +1,9 @@
 use std::{net::IpAddr, sync::Arc, time::Instant};
 
-use rocksdb::{Cache, ColumnFamily, IteratorMode, Options, WriteBatch, DB};
+use rocksdb::{Cache, ColumnFamily, DB, IteratorMode, Options, WriteBatch};
 use serde::{Deserialize, Serialize};
 
-use crate::port_scan::port_scan::ScanResult;
+use crate::{port_scan::port_scan::PortScanResult, service_scan::service_scan::ServiceScanResult};
 
 // Global settings for optimal performance
 const BLOCK_CACHE_SIZE_MB: usize = 512; // 512MB block cache
@@ -18,18 +18,92 @@ pub struct ResultDatabase {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct StringRow {
-    pub id: String,      // Row identifier
-    pub ports: Vec<i32>, // Array of string values
+pub struct DatabaseResult {
+    pub id: String,       // Row identifier
+    pub ports: Vec<i32>,  // Array of string values
+    pub services: String, // json services
 }
 
-impl StringRow {
+impl DatabaseResult {
     pub fn to_string(&self) -> String {
         let mut str = "".to_string();
 
-        str += format!("{} - ports: [{}]", self.id, join_nums(&self.ports, ",")).as_str();
+        str += format!(
+            "{} - ports: [{}] services: [{}]",
+            self.id,
+            join_nums(&self.ports, ","),
+            &self.services
+        )
+        .as_str();
 
         str
+    }
+    pub fn encode(&self, buf: &mut Vec<u8>) {
+        let values = vec![self.ports_to_string(), self.services.clone()];
+
+        // Write number of values
+        buf.extend_from_slice(&(values.len() as u32).to_le_bytes());
+
+        // Write each value
+        for value in values {
+            let value_bytes = value.as_bytes();
+            buf.extend_from_slice(&(value_bytes.len() as u32).to_le_bytes());
+            buf.extend_from_slice(value_bytes);
+        }
+    }
+    // Binary decoding of row data
+    pub fn decode(key: &str, data: &[u8]) -> Option<Self> {
+        println!("{}", data.len());
+        if data.len() < 8 {
+            return None;
+        }
+
+        let mut pos = 0;
+
+        if pos + 4 > data.len() {
+            return None;
+        }
+        let mut values_count_bytes = [0u8; 4];
+        values_count_bytes.copy_from_slice(&data[pos..pos + 4]);
+        let values_count = u32::from_le_bytes(values_count_bytes) as usize;
+        pos += 4;
+
+        // Read values
+        let mut values = Vec::with_capacity(values_count);
+        for _ in 0..values_count {
+            if pos + 4 > data.len() {
+                println!("error1!");
+                return None;
+            }
+
+            let mut value_len_bytes = [0u8; 4];
+            value_len_bytes.copy_from_slice(&data[pos..pos + 4]);
+            let value_len = u32::from_le_bytes(value_len_bytes) as usize;
+            pos += 4;
+
+            if pos + value_len > data.len() {
+                println!("error!");
+                return None;
+            }
+
+            let value = String::from_utf8_lossy(&data[pos..pos + value_len]).to_string();
+            values.push(value);
+            pos += value_len;
+        }
+
+        Some(DatabaseResult {
+            id: key.to_string(),
+            ports: if 1 > 0 {
+                split_nums(values[0].as_str(), ",")
+            } else {
+                Vec::new()
+            },
+            services: if 1 > 1 {
+                values[1].clone()
+            } else {
+                String::new()
+            },
+        })
     }
     pub fn ports_to_string(&self) -> String {
         return join_nums(&self.ports, ",");
@@ -96,7 +170,11 @@ impl ResultDatabase {
 
         // Define column families for different indexes
 
-        let column_families = vec!["default".to_string(), "ports".to_string()];
+        let column_families = vec![
+            "default".to_string(),
+            "ports".to_string(),
+            "services".to_string(),
+        ];
 
         Self {
             path: path.to_string(),
@@ -112,9 +190,10 @@ impl ResultDatabase {
         let mut string_rows = Vec::with_capacity(results.len()); // Pre-allocate capacity
 
         for result in results {
-            string_rows.push(StringRow {
+            string_rows.push(DatabaseResult {
                 id: result.to_string(),
                 ports: vec![],
+                services: String::new(),
             });
         }
 
@@ -123,27 +202,46 @@ impl ResultDatabase {
 
     pub fn add_tcp_results(
         &self,
-        results: &Vec<ScanResult>,
+        results: &Vec<PortScanResult>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut string_rows = Vec::with_capacity(results.len()); // Pre-allocate capacity
 
         for result in results {
-            string_rows.push(result.to_string_row());
+            string_rows.push(result.to_database());
         }
 
         return self.save_rows(string_rows);
     }
 
-    pub fn save_rows(&self, string_rows: Vec<StringRow>) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn add_service_results(
+        &self,
+        results: &Vec<ServiceScanResult>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut string_rows = Vec::with_capacity(results.len()); // Pre-allocate capacity
+
+        for result in results {
+            let e = result.to_database();
+            print!("{}", e.services);
+            string_rows.push(e);
+        }
+
+        return self.save_rows(string_rows);
+    }
+
+    pub fn save_rows(
+        &self,
+        string_rows: Vec<DatabaseResult>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let db = Arc::new(DB::open_cf(&self.options, &self.path, &self.columns)?);
         let cf_default = db.cf_handle(&self.columns[0]).unwrap();
         let cf_ports = db.cf_handle(&self.columns[1]).unwrap();
+        let cf_services = db.cf_handle(&self.columns[2]).unwrap();
 
         let start = Instant::now();
         let length = string_rows.len();
 
         // Split the rows into chunks for parallel processing
-        let chunks: Vec<Vec<StringRow>> = string_rows
+        let chunks: Vec<Vec<DatabaseResult>> = string_rows
             .chunks(BATCH_SIZE)
             .map(|chunk| chunk.to_vec())
             .collect();
@@ -160,19 +258,17 @@ impl ResultDatabase {
                     let mut batch = WriteBatch::default();
 
                     for row in chunk {
-                        // Use optimized binary format for the main data
-                        let mut data = Vec::with_capacity(256);
+                        batch.put_cf(cf_default_ref, row.id.as_bytes(), &vec![]);
 
-                        // Format: id_len + id + count + (len + str) for each value
-                        // Binary format: direct encoding without JSON overhead
-                        encode_row_binary(&mut data, &row);
+                        // Ports
+                        batch.put_cf(
+                            cf_ports,
+                            row.id.as_bytes(),
+                            row.ports_to_string().as_bytes(),
+                        );
 
-                        // Store in main column family
-                        batch.put_cf(cf_default_ref, row.id.as_bytes(), &data);
-
-                        let idx_key =
-                            format!("{}:{}", fast_escape(row.ports_to_string().as_str()), row.id);
-                        batch.put_cf(cf_ports, idx_key.as_bytes(), row.id.as_bytes());
+                        // Services
+                        batch.put_cf(cf_services, row.id.as_bytes(), row.services.as_bytes());
                     }
 
                     batch
@@ -195,19 +291,32 @@ impl ResultDatabase {
         Ok(())
     }
 
-    pub fn get_row_by_host(&self, row: &str) -> Option<StringRow> {
+    pub fn get_row_by_host(&self, row: &str) -> Option<DatabaseResult> {
         let db = DB::open_cf(&self.options, &self.path, &self.columns);
         if db.is_err() {
             return None;
         };
         let db = db.unwrap();
-        let cf_default = db.cf_handle("default").unwrap();
 
-        return fetch_row(&db, cf_default, row);
+        let cfs = vec![
+            db.cf_handle(&self.columns[0]).unwrap(),
+            db.cf_handle(&self.columns[1]).unwrap(),
+            db.cf_handle(&self.columns[2]).unwrap(),
+        ];
+
+        return self.fetch_row(&db, row, &cfs);
     }
 
-    pub fn get_rows_by_port(&self, port: &str) -> Vec<StringRow> {
-        if let Ok(result) = self.search_substring_in_column(self.columns[0].as_str(), port) {
+    pub fn get_rows_by_port(&self, port: &str) -> Vec<DatabaseResult> {
+        if let Ok(result) = self.search_substring_in_column(self.columns[1].as_str(), port) {
+            return result;
+        } else {
+            return Vec::new();
+        }
+    }
+
+    pub fn get_rows_by_service(&self, port: &str) -> Vec<DatabaseResult> {
+        if let Ok(result) = self.search_substring_in_column(self.columns[2].as_str(), port) {
             return result;
         } else {
             return Vec::new();
@@ -218,12 +327,17 @@ impl ResultDatabase {
         &self,
         column: &str,
         substring: &str,
-    ) -> Result<Vec<StringRow>, rocksdb::Error> {
+    ) -> Result<Vec<DatabaseResult>, rocksdb::Error> {
         let db = Arc::new(DB::open_cf(&self.options, &self.path, &self.columns)?);
 
         let cf = db.cf_handle(column).unwrap();
+        let cfs = vec![
+            db.cf_handle(&self.columns[0]).unwrap(),
+            db.cf_handle(&self.columns[1]).unwrap(),
+            db.cf_handle(&self.columns[2]).unwrap(),
+        ];
 
-        let mut matching_keys: Vec<StringRow> = Vec::new();
+        let mut matching_keys: Vec<DatabaseResult> = Vec::new();
 
         // Use RocksDB's iterator for efficient scanning
         let iter = db.iterator_cf(cf, IteratorMode::Start);
@@ -238,7 +352,7 @@ impl ResultDatabase {
                 if value_str.contains(substring) {
                     // Convert key to string and add to results
                     if let Ok(key_str) = std::str::from_utf8(&key_bytes) {
-                        if let Some(row) = decode_row_binary(key_str, &value_bytes) {
+                        if let Some(row) = self.fetch_row(&db, key_str, &cfs) {
                             matching_keys.push(row);
                         }
                     }
@@ -248,76 +362,23 @@ impl ResultDatabase {
 
         Ok(matching_keys)
     }
-}
 
-// Fast minimal escaping for key values
-#[inline]
-fn fast_escape(s: &str) -> String {
-    // Only escape the colon character which is our separator
-    s.replace(":", "\\:")
-}
-
-// Fast unescaping for key values
-#[inline]
-
-// Fast direct row fetch by ID
-fn fetch_row(db: &DB, cf_default: &ColumnFamily, row_id: &str) -> Option<StringRow> {
-    match db.get_cf(cf_default, row_id.as_bytes()) {
-        Ok(Some(value)) => decode_row_binary(row_id, &value),
-        _ => None,
-    }
-}
-// Binary decoding of row data
-fn decode_row_binary(key: &str, data: &[u8]) -> Option<StringRow> {
-    if data.len() < 8 {
-        return None;
-    }
-
-    let mut pos = 0;
-
-    let mut values_count_bytes = [0u8; 4];
-    values_count_bytes.copy_from_slice(&data[pos..pos + 4]);
-    let values_count = u32::from_le_bytes(values_count_bytes) as usize;
-    pos += 4;
-
-    // Read values
-    let mut values = Vec::with_capacity(values_count);
-    for _ in 0..values_count {
-        if pos + 4 > data.len() {
-            return None;
+    fn fetch_row(&self, db: &DB, row_id: &str, cfs: &Vec<&ColumnFamily>) -> Option<DatabaseResult> {
+        match db.get_cf(&cfs[0], row_id.as_bytes()) {
+            Ok(Some(_)) => Some(DatabaseResult {
+                id: row_id.to_string(),
+                ports: split_nums(&self.row_to_string(db, row_id, &cfs[1]), ","),
+                services: self.row_to_string(db, row_id, &cfs[2]),
+            }),
+            _ => None,
         }
-
-        let mut value_len_bytes = [0u8; 4];
-        value_len_bytes.copy_from_slice(&data[pos..pos + 4]);
-        let value_len = u32::from_le_bytes(value_len_bytes) as usize;
-        pos += 4;
-
-        if pos + value_len > data.len() {
-            return None;
-        }
-
-        let value = String::from_utf8_lossy(&data[pos..pos + value_len]).to_string();
-        values.push(value);
-        pos += value_len;
     }
 
-    Some(StringRow {
-        id: key.to_string(),
-        ports: split_nums(values[0].as_str(), ","),
-    })
-}
-
-// Binary encoding of row data for maximum performance
-fn encode_row_binary(buf: &mut Vec<u8>, row: &StringRow) {
-    let values = vec![row.ports_to_string()];
-
-    // Write number of values
-    buf.extend_from_slice(&(values.len() as u32).to_le_bytes());
-
-    // Write each value
-    for value in vec![row.ports_to_string()] {
-        let value_bytes = value.as_bytes();
-        buf.extend_from_slice(&(value_bytes.len() as u32).to_le_bytes());
-        buf.extend_from_slice(value_bytes);
+    fn row_to_string(&self, db: &DB, row_id: &str, cf: &ColumnFamily) -> String {
+        if let Ok(Some(data)) = &db.get_cf(cf, row_id) {
+            String::from_utf8_lossy(data).to_string()
+        } else {
+            String::new()
+        }
     }
 }
