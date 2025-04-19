@@ -7,13 +7,13 @@ use std::{
     time::Duration,
 };
 
-use indicatif::ProgressBar;
+use indicatif::{ProgressBar, ProgressStyle};
 
 use crate::{
     database::DatabaseResult, port_scan::port_scan::PortScanResult, service_scan::tcp_http,
 };
 
-use super::{services::SERVICE_PATTERNS, tcp_https};
+use super::{services::SERVICE_PATTERNS, tcp_https, tcp_minecraft};
 
 #[derive(Debug, Clone)]
 pub struct ServiceScanResult {
@@ -31,24 +31,51 @@ impl ServiceScanResult {
         }
     }
     pub fn to_database(&self) -> DatabaseResult {
+        let data = serde_json::to_string(&self.services).unwrap_or(String::new());
+
+        let mut services = Vec::new();
+
+        for key in self.services.keys() {
+            services.push(self.services.get(key).unwrap().0.clone());
+        }
+
+        services.sort();
+        services.dedup();
+
+        // println!("{}", data);
         DatabaseResult {
             id: self.ip.to_string(),
             ports: self.open_ports.clone(),
-            services: serde_json::to_string(&self.services).unwrap_or(String::new()),
+            services,
+            responses: data,
         }
     }
 }
 
 pub fn identify(ip: IpAddr, port: &i32, timeout: Duration) -> (String, String) {
-    let e = || basic_identify(ip, port, timeout).unwrap_or(("tcp".to_string(), "".to_string()));
+    let e = || {
+        let (service, data) =
+            basic_identify(ip, port, timeout).unwrap_or(("tcp".to_string(), "".to_string()));
 
-    match port {
+        (match service.as_str() {
+            "http" => tuple_or_none("http", tcp_http::scan(ip, port, timeout)),
+            "https" => tuple_or_none("https", tcp_https::scan(ip, port, timeout)),
+            "minecraft" => tuple_or_none("minecraft", tcp_minecraft::scan(ip, port, timeout)),
+            _ => None,
+        })
+        .unwrap_or((service, data))
+    };
+
+    (match port {
         80 | 8080 | 8081 | 8082 | 8083 | 8084 | 8085 | 8086 | 8087 | 8088 | 8089 => {
-            tuple_or_none("http", tcp_http::scan(ip, port, timeout)).unwrap_or(e())
+            tuple_or_none("http", tcp_http::scan(ip, port, timeout))
         }
-        443 | 8443 => tuple_or_none("https", tcp_https::scan(ip, port, timeout)).unwrap_or(e()),
-        _ => e(),
-    }
+        443 | 8443 => tuple_or_none("https", tcp_https::scan(ip, port, timeout)),
+        25565 | 25575 => tuple_or_none("minecraft", tcp_minecraft::scan(ip, port, timeout)),
+
+        _ => None,
+    })
+    .unwrap_or(e())
 }
 
 fn tuple_or_none(
@@ -79,11 +106,18 @@ pub fn scan_services(
     ));
 
     let mut handles = Vec::new();
-    let pb = Arc::new(ProgressBar::new(host_port_count));
+    let pb = Arc::new(
+        ProgressBar::new(host_port_count).with_style(
+            ProgressStyle::with_template(
+                "[{msg}] {wide_bar:.magenta/red} {pos}/{len} ({eta_precise})",
+            )
+            .unwrap(),
+        ),
+    );
 
     // Create a thread for each chunk of IPs
     let chunks = split_ips_into_chunks(port_scan_results, num_threads);
-    for chunk in chunks {
+    for (i, chunk) in chunks.iter().enumerate() {
         let chunk_hosts = chunk.clone();
         let thread_results = Arc::clone(&results);
         let thread_timeout = timeout;
@@ -104,6 +138,7 @@ pub fn scan_services(
                     thread_pb.inc(1);
                 }
             }
+            // println!("Finished chunk {}", i)
         }));
     }
 
@@ -111,18 +146,18 @@ pub fn scan_services(
         handle.join().unwrap();
     }
 
-    pb.clone().finish_and_clear();
+    pb.clone().finish_with_message("Finished!");
 
     Arc::try_unwrap(results)
         .expect("Arc still has multiple owners")
         .into_inner()
         .expect("Mutex poisoned")
-        .into_iter()
-        .map(|a| {
-            println!("{:?}", a);
-            a
-        })
-        .collect()
+    // .into_iter()
+    // .map(|a| {
+    //     println!("{:?}", a);
+    //     a
+    // })
+    // .collect()
 }
 
 // Helper function to split the IPs into roughly equal chunks for threading
@@ -216,26 +251,26 @@ fn identify_service_from_response(response: &[u8]) -> Option<&str> {
         }
     }
 
-    // For binary responses, check for pattern matches
-    // Check for SSL/TLS
-    if response.len() >= 3 && response[0] == 0x16 && (response[1] == 0x03 || response[1] == 0x02) {
-        return Some("ssl/tls");
-    }
+    // // For binary responses, check for pattern matches
+    // // Check for SSL/TLS
+    // if response.len() >= 3 && response[0] == 0x16 && (response[1] == 0x03 || response[1] == 0x02) {
+    //     return Some("ssl/tls");
+    // }
 
-    // Check for MySQL protocol
-    if response.len() >= 5 && response[0] == 0x4a && response[1] == 0x00 {
-        return Some("mysql");
-    }
+    // // Check for MySQL protocol
+    // if response.len() >= 5 && response[0] == 0x4a && response[1] == 0x00 {
+    //     return Some("mysql");
+    // }
 
-    // Check for MongoDB wire protocol
-    if response.len() >= 4
-        && response[0] == 0x02
-        && response[1] == 0x00
-        && response[2] == 0x00
-        && response[3] == 0x00
-    {
-        return Some("mongodb");
-    }
+    // // Check for MongoDB wire protocol
+    // if response.len() >= 4
+    //     && response[0] == 0x02
+    //     && response[1] == 0x00
+    //     && response[2] == 0x00
+    //     && response[3] == 0x00
+    // {
+    //     return Some("mongodb");
+    // }
 
     None
 }

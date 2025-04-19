@@ -25,7 +25,8 @@ impl PingResult {
         DatabaseResult {
             id: self.host.to_string(),
             ports: vec![],
-            services: String::new(),
+            services: Vec::new(),
+            responses: String::new(),
         }
     }
 }

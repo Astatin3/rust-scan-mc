@@ -1,8 +1,13 @@
-use std::{cmp::min, env, net::IpAddr, time::Duration};
+use std::{
+    cmp::min,
+    env,
+    net::IpAddr,
+    time::{Duration, Instant},
+};
 
 use parse_ip_range::parse_ip_targets;
 use untitled::{
-    database::ResultDatabase, online_scan, parse_ip_range, port_scan::tcp_scan,
+    database::ResultDatabase, online_scan, parse_ip_range, port_scan::tcp_scan, query,
     service_scan::service_scan::scan_services,
 };
 
@@ -26,14 +31,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             let _ = scan(database, args[2].clone(), args[3].clone());
         }
-        "search" => {
-            if args.len() != 4 {
-                println!("Invalid Usage!");
-                print_help(Some(args[1].as_str()));
-                return Ok(());
-            }
-            search(database, args[2].to_string(), args[3].to_string());
-        }
+        // "search" => {
+        //     if args.len() != 4 {
+        //         println!("Invalid Usage!");
+        //         print_help(Some(args[1].as_str()));
+        //         return Ok(());
+        //     }
+        //     search(database, args[2].to_string(), args[3].to_string());
+        // }
         "help" => {
             if args.len() != 3 {
                 print_help(None);
@@ -41,10 +46,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             print_help(Some(args[2].as_str()));
         }
+        "test" => {
+            let start = Instant::now();
+            if let Ok(query) = query::search(args[2..].join(" ")) {
+                let results = database.search(query);
+                if let Ok(results) = results {
+                    let len = results.len();
+                    for result in results {
+                        println!("{}", result.to_string());
+                    }
+                    println!("{} results in {}ms", len, start.elapsed().as_millis());
+                }
+            }
+        }
         _ => {
             println!("Invalid command!");
             print_help(None);
-            return Ok(());
         }
     }
 
@@ -184,7 +201,7 @@ fn scan(
                 let _ = database.add_tcp_results(&tcp_results);
 
                 let service_results =
-                    scan_services(tcp_results, min(500, up_len), Duration::from_secs(3));
+                    scan_services(tcp_results, min(100, up_len), Duration::from_secs(1));
                 println!("Finished service scan");
                 let _ = database.add_service_results(&service_results);
             }

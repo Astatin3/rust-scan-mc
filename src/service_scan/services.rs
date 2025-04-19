@@ -3,7 +3,11 @@ use regex::Regex;
 
 lazy_static! {
     pub static ref SERVICE_PATTERNS: Vec<(Regex, &'static str)> = vec![
+        // Unknown
+        (Regex::new(r"^$").unwrap(), "tcp"),
+
         // HTTP and Web Services
+        (Regex::new(r"HTTP.*HTTPS").unwrap(), "https"),
         (Regex::new(r"^HTTP/\d").unwrap(), "http"),
         (Regex::new(r"Server:").unwrap(), "http"),
         (Regex::new(r"<html.*>").unwrap(), "http"),

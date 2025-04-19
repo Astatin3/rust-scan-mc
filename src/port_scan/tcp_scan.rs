@@ -2,12 +2,12 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 use std::str::FromStr;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use indicatif::ProgressBar;
+use indicatif::{ProgressBar, ProgressStyle};
 use pnet::datalink::{self};
 use pnet::packet::ip::IpNextHeaderProtocols;
 use pnet::packet::tcp::{MutableTcpPacket, TcpFlags, TcpPacket};
@@ -44,7 +44,6 @@ pub fn tcp_scan(targets: Vec<IpAddr>, ports: Vec<i32>, timeout: Duration) -> Vec
         }))
         .expect("No valid network interface found");
 
-    // Create transport channel for sending and receiving
     let (mut tx, mut rx) = transport::transport_channel(
         65535,
         TransportChannelType::Layer4(pnet::transport::TransportProtocol::Ipv4(
@@ -53,10 +52,8 @@ pub fn tcp_scan(targets: Vec<IpAddr>, ports: Vec<i32>, timeout: Duration) -> Vec
     )
     .expect("Failed to create transport channel");
 
-    // Shared results
     let results = Arc::new(Mutex::new(HashMap::<IpAddr, Vec<i32>>::new()));
 
-    // Initialize results map
     {
         let mut results_map = results.lock().unwrap();
         for ip in &targets {
@@ -65,14 +62,16 @@ pub fn tcp_scan(targets: Vec<IpAddr>, ports: Vec<i32>, timeout: Duration) -> Vec
     }
 
     let finished_sending_time = Arc::new(AtomicBool::new(false));
+    let port_count = Arc::new(AtomicU32::new(0));
 
     let receiver_results = Arc::clone(&results);
     let receiver_finished_sending_time = Arc::clone(&finished_sending_time);
+    let receiver_port_count = Arc::clone(&port_count);
     let receiver_handle = thread::spawn(move || {
         let start_time = std::time::Instant::now();
         let mut finish_sending_time: Option<Instant> = None;
 
-        let mut tmp_results: Vec<(TcpPacket<'_>, IpAddr)> = Vec::new();
+        // let mut tmp_results: Vec<(TcpPacket<'_>, IpAddr)> = Vec::new();
 
         let mut iter = transport::tcp_packet_iter(&mut rx);
         loop {
@@ -102,15 +101,16 @@ pub fn tcp_scan(targets: Vec<IpAddr>, ports: Vec<i32>, timeout: Duration) -> Vec
                     if let Some(tcp) = TcpPacket::new(packet.packet()) {
                         // Check for SYN+ACK flags (indicating open port)
                         if tcp.get_flags() == TcpFlags::SYN | TcpFlags::ACK {
-                            println!(
-                                "Discovered open port {} on {}",
-                                tcp.get_source(),
-                                addr.to_string()
-                            );
+                            // println!(
+                            //     "Discovered open port {} on {}",
+                            //     tcp.get_source(),
+                            //     addr.to_string()
+                            // );
                             let mut results_map = receiver_results.lock().unwrap();
                             if let Some(open_ports) = results_map.get_mut(&addr) {
                                 open_ports.push(tcp.get_source() as i32);
                             }
+                            receiver_port_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         }
                     }
                 }
@@ -124,7 +124,10 @@ pub fn tcp_scan(targets: Vec<IpAddr>, ports: Vec<i32>, timeout: Duration) -> Vec
         // for (packet, addr) in tmp_results {}
     });
 
-    let pb = ProgressBar::new((targets.len() * ports.len()) as u64);
+    let pb = ProgressBar::new((targets.len() * ports.len()) as u64).with_style(
+        ProgressStyle::with_template("[{msg}] {wide_bar:.cyan/blue} {pos}/{len} ({eta_precise})")
+            .unwrap(),
+    );
 
     // println!("{:?}", interface.ips);
 
@@ -143,6 +146,7 @@ pub fn tcp_scan(targets: Vec<IpAddr>, ports: Vec<i32>, timeout: Duration) -> Vec
     // println!("Using IP: {}", source_ip.to_string());
 
     let sender_finished_sending_time = Arc::clone(&finished_sending_time);
+    let sender_port_count = Arc::clone(&port_count);
     for target in &targets {
         for port in &ports {
             // let source_ip = Ipv4Addr::from_bits(random_range(0..=(0xffffffff)));
@@ -177,10 +181,17 @@ pub fn tcp_scan(targets: Vec<IpAddr>, ports: Vec<i32>, timeout: Duration) -> Vec
 
             send_tcp_packet(&mut tx, tcp_header, target);
 
+            pb.set_message(format!(
+                "{} ports",
+                sender_port_count.load(std::sync::atomic::Ordering::Relaxed),
+            ));
             pb.inc(1);
+
             thread::sleep(Duration::from_micros(100));
         }
     }
+
+    pb.finish_with_message("Finished!");
     sender_finished_sending_time.swap(true, std::sync::atomic::Ordering::Relaxed);
     // Wait for receiver to finish
     // thread::sleep(timeout);

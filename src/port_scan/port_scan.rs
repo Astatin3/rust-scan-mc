@@ -20,7 +20,8 @@ impl PortScanResult {
         DatabaseResult {
             id: self.ip.to_string(),
             ports: (*self.open_ports).to_vec(),
-            services: String::new(),
+            services: Vec::new(),
+            responses: String::new(),
         }
     }
 }
