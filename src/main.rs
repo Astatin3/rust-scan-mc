@@ -20,6 +20,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.len() <= 1 {
         println!("You must specify a command!");
         print_help(None);
+        return Ok(());
     }
 
     match args[1].to_lowercase().as_str() {
@@ -46,7 +47,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             print_help(Some(args[2].as_str()));
         }
-        "test" => {
+        "search" => {
             let start = Instant::now();
             if let Ok(query) = query::search(args[2..].join(" ")) {
                 let results = database.search(query);
@@ -201,7 +202,7 @@ fn scan(
                 let _ = database.add_tcp_results(&tcp_results);
 
                 let service_results =
-                    scan_services(tcp_results, min(100, up_len), Duration::from_secs(1));
+                    scan_services(tcp_results, min(50, up_len), Duration::from_secs(1));
                 println!("Finished service scan");
                 let _ = database.add_service_results(&service_results);
             }
@@ -214,37 +215,37 @@ fn scan(
     Ok(())
 }
 
-fn search(database: ResultDatabase, search_type: String, arg: String) {
-    match search_type.as_str() {
-        "host" => {
-            let row = database.get_row_by_host(&arg);
-            if let Some(row) = row {
-                println!("{}", row.to_string());
-            } else {
-                println!("Could not find host by argument {}", arg.as_str());
-            }
-        }
+// fn search(database: ResultDatabase, search_type: String, arg: String) {
+//     match search_type.as_str() {
+//         "host" => {
+//             let row = database.get_row_by_host(&arg);
+//             if let Some(row) = row {
+//                 println!("{}", row.to_string());
+//             } else {
+//                 println!("Could not find host by argument {}", arg.as_str());
+//             }
+//         }
 
-        "port" => {
-            let rows = database.get_rows_by_port(&arg);
+//         "port" => {
+//             let rows = database.get_rows_by_port(&arg);
 
-            for row in rows {
-                println!("{}", row.to_string());
-            }
-        }
+//             for row in rows {
+//                 println!("{}", row.to_string());
+//             }
+//         }
 
-        "service" => {
-            let rows = database.get_rows_by_service(&arg);
+//         "service" => {
+//             let rows = database.get_rows_by_service(&arg);
 
-            for row in rows {
-                println!("{}", row.to_string());
-            }
-        }
-        _ => {
-            println!("Invalid search type!");
-        }
-    }
-}
+//             for row in rows {
+//                 println!("{}", row.to_string());
+//             }
+//         }
+//         _ => {
+//             println!("Invalid search type!");
+//         }
+//     }
+// }
 
 fn print_help(arg: Option<&str>) {
     println!(
@@ -253,15 +254,50 @@ fn print_help(arg: Option<&str>) {
             None => {
                 "rust-scan help menu
 Commands:
-    scan   <type> <hosts> (arguments) - scan a block of addresses and check for online using icmp echo
-    search <type> <arguments>         - Search database
-    help   (command)                  - Print help"
+    scan   <type> <hosts> - scan a block of addresses and check for online using icmp echo
+    search <arguments>    - Search database
+    help   (command)      - Print help"
             }
-            //             Some("scan") => {
-            //                 "pingscan <addresses>
-            // scan a block of addresses and check for online using icmp echo
-            // Usage: pingscan 10.42.0.1,12.34.0.0-12.34.56.78,127.0.0.0/8"
-            //             }
+            Some("scan") => {
+                "Usage scan (type) <addresses>
+
+Example: scan ping 127.0.0.0/8
+Example: scan 12.34.0.0-12.34.56.78,127.0.0.1
+
+scan a block of addresses using diffrent methods
+
+- scan ping <addresses>
+Scan a block of addresses and check if their online
+
+- scan tcp <addresses>
+Scan a block of addresses and check if their online, then scan and check what ports are open
+
+- scan service <addresses>
+Scan a block of addresses and check if their online, then scan to check what ports are open, then scan to check what services are running and record responses
+
+- scan <addresses>
+Same as scan service"
+            }
+
+            Some("search") => {
+                "Usage: search <arguments>
+Example: search ssh:raspbian
+Example: search port:80,443 http-nginx https-nginx
+Example: search port-8081 https:favicon
+Example: search google
+Example: search port=22,80,443
+
+The format of the search is a list of tags that include the service or port followed by an equator, or a plain text search
+
+There are four types of equators
+
+\":\" or \"+\" - If the result contains an item
+\"-\" - If the result does not contain an item
+\"=\" - If the result is exactly equal to an item
+\"!=\" - If the result is exactly not equal to an item
+
+"
+            }
             Some(_) => {
                 print_help(None);
                 "Invalid Command!"

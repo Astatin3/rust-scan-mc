@@ -752,7 +752,7 @@ pub fn search_parallel(
                 || if let (Some(services_value), Some(responses_value)) =
                     (services_data.get(key), responses_data.get(key))
                 {
-                    if let (Ok(services_str), Ok(responses_str)) = (
+                    if let (Ok(_), Ok(responses_str)) = (
                         std::str::from_utf8(services_value),
                         std::str::from_utf8(responses_value),
                     ) {
@@ -763,20 +763,25 @@ pub fn search_parallel(
                                 if let QueryDataType::Service(query_type, service_name, data_str) =
                                     *query
                                 {
+                                    let data_str = &data_str.to_lowercase();
                                     responses_map
                                         .values()
                                         .any(|(service, data)| match query_type {
                                             QueryType::Equals => {
-                                                service == service_name && data == data_str
+                                                &service.to_lowercase() == service_name
+                                                    && data == data_str
                                             }
                                             QueryType::NotEquals => {
-                                                service != service_name || data != data_str
+                                                &service.to_lowercase() != service_name
+                                                    || data != data_str
                                             }
                                             QueryType::Includes => {
-                                                service == service_name && data.contains(data_str)
+                                                &service.to_lowercase() == service_name
+                                                    && data.to_lowercase().contains(data_str)
                                             }
                                             QueryType::NotIncludes => {
-                                                service != service_name || !data.contains(data_str)
+                                                &service.to_lowercase() != service_name
+                                                    || !data.to_lowercase().contains(data_str)
                                             }
                                         })
                                 } else {

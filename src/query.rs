@@ -11,7 +11,7 @@ pub fn search(query: String) -> Result<Vec<QueryDataType>, Box<dyn std::error::E
 
     let split = query.split(" ");
 
-    let delim = Regex::new("(?:!=|[=:;])")?;
+    let delim = Regex::new("(?:!=|[=:+-])")?;
 
     let mut results = Vec::new();
 
@@ -27,8 +27,8 @@ pub fn search(query: String) -> Result<Vec<QueryDataType>, Box<dyn std::error::E
 
             fn get_equals_type(delim: &str) -> QueryType {
                 match delim {
-                    ":" => Some(QueryType::Includes),
-                    ";" => Some(QueryType::NotIncludes),
+                    ":" | "+" => Some(QueryType::Includes),
+                    "-" => Some(QueryType::NotIncludes),
                     "=" => Some(QueryType::Equals),
                     "!=" => Some(QueryType::NotEquals),
                     _ => None,
