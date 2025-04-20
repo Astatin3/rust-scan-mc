@@ -8,14 +8,23 @@ pub fn scan(
     timeout: Duration,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let mut result = String::new();
-    let _ = reqwest::blocking::Client::builder()
+
+    // println!("HTTP start");
+
+    let mut r = reqwest::blocking::Client::builder()
         .redirect(Policy::none())
         .timeout(timeout)
+        .connect_timeout(timeout)
         .build()
         .unwrap()
         .get(format!("http://{}:{}", ip.to_string(), port))
-        .send()?
-        .read_to_string(&mut result);
+        .send()?;
+
+    // println!("HTTP reading");
+
+    let _ = r.read_to_string(&mut result)?;
+
+    // println!("HTTP stop");
 
     Ok(result)
 }

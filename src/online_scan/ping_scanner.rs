@@ -5,7 +5,7 @@ use pnet::packet::{
     icmp::{IcmpTypes, echo_request::MutableEchoRequestPacket},
 };
 use pnet::transport::{
-    TransportChannelType, TransportProtocol, icmp_packet_iter, tcp_packet_iter, transport_channel,
+    TransportChannelType, TransportProtocol, icmp_packet_iter, transport_channel,
 };
 use pnet::util::checksum;
 use std::collections::HashMap;

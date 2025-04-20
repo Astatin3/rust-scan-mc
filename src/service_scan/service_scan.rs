@@ -2,12 +2,13 @@ use std::{
     collections::HashMap,
     io::{Read, Write},
     net::{IpAddr, SocketAddr, TcpStream},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, MutexGuard},
     thread,
     time::Duration,
 };
 
 use indicatif::{ProgressBar, ProgressStyle};
+use rand::seq::SliceRandom;
 
 use crate::{
     database::DatabaseResult, port_scan::port_scan::PortScanResult, service_scan::tcp_http,
@@ -54,28 +55,42 @@ impl ServiceScanResult {
 
 pub fn identify(ip: IpAddr, port: &i32, timeout: Duration) -> (String, String) {
     let e = || {
-        let (service, data) =
-            basic_identify(ip, port, timeout).unwrap_or(("tcp".to_string(), "".to_string()));
+        // // println!("secondary1");
+        // let (service, data) =
+        //     basic_identify(ip, port, timeout).unwrap_or(("tcp".to_string(), "".to_string()));
 
-        (match service.as_str() {
-            "http" => tuple_or_none("http", tcp_http::scan(ip, port, timeout)),
-            "https" => tuple_or_none("https", tcp_https::scan(ip, port, timeout)),
-            "minecraft" => tuple_or_none("minecraft", tcp_minecraft::scan(ip, port, timeout)),
-            _ => None,
-        })
-        .unwrap_or((service, data))
+        // // println!("secondary2");
+
+        // (match service.as_str() {
+        //     "http" => tuple_or_none("http", tcp_http::scan(ip, port, timeout)),
+        //     "https" => tuple_or_none("https", tcp_https::scan(ip, port, timeout)),
+        //     "minecraft" => tuple_or_none("minecraft", tcp_minecraft::scan(ip, port, timeout)),
+        //     _ => None,
+        // })
+        // .unwrap_or((service, data))
+        basic_identify(ip, port, timeout).unwrap_or(("tcp".to_string(), "".to_string()))
     };
+
+    // println!("primary");
 
     (match port {
         80 | 8080 | 8081 | 8082 | 8083 | 8084 | 8085 | 8086 | 8087 | 8088 | 8089 => {
+            // println!("http");
             tuple_or_none("http", tcp_http::scan(ip, port, timeout))
         }
-        443 | 8443 => tuple_or_none("https", tcp_https::scan(ip, port, timeout)),
-        25565 | 25575 => tuple_or_none("minecraft", tcp_minecraft::scan(ip, port, timeout)),
+        443 | 8443 => {
+            // println!("https");
+            tuple_or_none("https", tcp_https::scan(ip, port, timeout))
+        }
+        25565 | 25575 => {
+            // println!("minecraft");
+            tuple_or_none("minecraft", tcp_minecraft::scan(ip, port, timeout))
+        }
 
         _ => None,
     })
     .unwrap_or(e())
+    // basic_identify(ip, port, timeout).unwrap_or(("tcp".to_string(), "".to_string()))
 }
 
 fn tuple_or_none(
@@ -105,6 +120,17 @@ pub fn scan_services(
             .collect(),
     ));
 
+    let mut host_port: Vec<(IpAddr, i32)> = Vec::with_capacity(host_port_count as usize);
+    for host in &port_scan_results {
+        for port in &host.open_ports {
+            host_port.push((host.ip, port.clone()));
+        }
+    }
+
+    host_port.shuffle(&mut rand::rng());
+
+    let host_port = Arc::new(Mutex::new(host_port));
+
     let mut handles = Vec::new();
     let pb = Arc::new(
         ProgressBar::new(host_port_count).with_style(
@@ -116,28 +142,57 @@ pub fn scan_services(
     );
 
     // Create a thread for each chunk of IPs
-    let chunks = split_ips_into_chunks(port_scan_results, num_threads);
-    for (i, chunk) in chunks.iter().enumerate() {
-        let chunk_hosts = chunk.clone();
+    // let chunks = split_ips_into_chunks(port_scan_results, num_threads);
+    for i in 0..=num_threads {
+        // println!("Thread {},{}", i, chunk.len());
+        // let chunk_hosts = chunk.clone();
+        let thread_hosts = Arc::clone(&host_port);
         let thread_results = Arc::clone(&results);
         let thread_timeout = timeout;
         let thread_pb = Arc::clone(&pb);
         handles.push(thread::spawn(move || {
-            for host in chunk_hosts {
-                let ports = &host.open_ports;
-                for port in ports {
-                    // Try to identify the service on the port
-                    let (service_name, banner) = identify(host.ip, port, thread_timeout);
+            loop {
+                let mut hosts = thread_hosts.lock().unwrap();
+                // println!("{}, {}, {}", i, hosts.len(), total_count);
 
-                    let mut results_guard = thread_results.lock().unwrap();
-                    if let Some(result) = results_guard.iter_mut().find(|r| r.ip == host.ip) {
-                        result.open_ports.push(*port);
-                        result.services.insert(*port, (service_name, banner));
-                    }
-
-                    thread_pb.inc(1);
+                if hosts.len() == 0 {
+                    // println!("Break thread {} A", i);
+                    break;
                 }
+
+                let host = hosts.pop();
+
+                std::mem::drop(hosts);
+
+                if host.is_none() {
+                    // println!("Break thread {} B", i);
+                    break;
+                }
+                let host = host.unwrap();
+
+                let ip = host.0;
+                let port = host.1;
+
+                println!("{}, {}, {}", i, ip, port);
+
+                // Try to identify the service on the port
+                // println!("Thread {} stall 2", i);
+                let (service_name, banner) = identify(ip, &port, thread_timeout);
+                // println!("Thread {} stall 3", i);
+
+                let mut results_guard = thread_results.lock().unwrap();
+                if let Some(result) = results_guard.iter_mut().find(|r| r.ip == ip) {
+                    result.open_ports.push(port);
+                    result.services.insert(port, (service_name, banner));
+                }
+                // println!("Thread {} stall 4", i);
+
+                thread_pb.inc(1);
+                // println!("Thread {}", i);
+
+                // total_count += 1;
             }
+            // println!("Thread {}", i);
             // println!("Finished chunk {}", i)
         }));
     }
@@ -222,6 +277,7 @@ fn try_connect(ip: IpAddr, port: &i32, timeout: Duration, probe: &[u8]) -> Optio
 }
 
 fn basic_identify(ip: IpAddr, port: &i32, timeout: Duration) -> Option<(String, String)> {
+    // println!("Start try_connect");
     // Try a simple connection with no probe as last resort
     if let Some(response) = try_connect(ip, port, timeout, b"\x00\n") {
         if !response.is_empty() {
@@ -233,9 +289,13 @@ fn basic_identify(ip: IpAddr, port: &i32, timeout: Duration) -> Option<(String, 
             }
         }
 
+        // println!("End try_connect1");
+
         // Port is open but service couldn't be identified
         return Some(("tcp".to_string(), "".to_string()));
     }
+
+    // println!("Start try_connect2");
 
     None
 }

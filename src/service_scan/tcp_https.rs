@@ -8,15 +8,24 @@ pub fn scan(
     timeout: Duration,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let mut result = String::new();
-    let _response = reqwest::blocking::Client::builder()
+
+    // println!("https start");
+
+    let mut response = reqwest::blocking::Client::builder()
         .danger_accept_invalid_certs(true)
         .redirect(Policy::none())
         .timeout(timeout)
+        .connect_timeout(timeout)
         .build()
         .unwrap()
         .get(format!("https://{}:{}", ip.to_string(), port))
-        .send()?
-        .read_to_string(&mut result);
+        .send()?;
+
+    // println!("https read");
+
+    let _ = response.read_to_string(&mut result);
+
+    // println!("https stop");
 
     // println!("{}", result);
 

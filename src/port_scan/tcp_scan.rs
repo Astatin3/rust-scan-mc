@@ -1,4 +1,3 @@
-use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 use std::str::FromStr;
@@ -68,7 +67,6 @@ pub fn tcp_scan(targets: Vec<IpAddr>, ports: Vec<i32>, timeout: Duration) -> Vec
     let receiver_finished_sending_time = Arc::clone(&finished_sending_time);
     let receiver_port_count = Arc::clone(&port_count);
     let receiver_handle = thread::spawn(move || {
-        let start_time = std::time::Instant::now();
         let mut finish_sending_time: Option<Instant> = None;
 
         // let mut tmp_results: Vec<(TcpPacket<'_>, IpAddr)> = Vec::new();
