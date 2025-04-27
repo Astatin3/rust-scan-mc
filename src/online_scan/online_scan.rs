@@ -21,12 +21,12 @@ impl PingResult {
         }
     }
 
-    pub fn to_database(&self) -> DatabaseResult {
-        DatabaseResult {
-            id: self.host.to_string(),
-            ports: vec![],
-            services: Vec::new(),
-            responses: String::new(),
-        }
-    }
+    // pub fn to_database(&self) -> DatabaseResult {
+    //     DatabaseResult {
+    //         ip: self.host.to_string(),
+    //         ports: vec![],
+    //         services: Vec::new(),
+    //         responses: String::new(),
+    //     }
+    // }
 }

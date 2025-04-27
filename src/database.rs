@@ -6,8 +6,6 @@ use serde::{Deserialize, Serialize};
 
 use rayon::prelude::*;
 
-use crate::{port_scan::port_scan::PortScanResult, service_scan::service_scan::ServiceScanResult};
-
 // Global settings for optimal performance
 const BLOCK_CACHE_SIZE_MB: usize = 512; // 512MB block cache
 const WRITE_BUFFER_SIZE_MB: usize = 64; // 64MB write buffer
@@ -22,35 +20,84 @@ pub struct ResultDatabase {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DatabaseResult {
-    pub id: String,
-    pub ports: Vec<i32>,
-    pub services: Vec<String>,
-    pub responses: String,
+    pub ip: String,
+    pub port: u16,
+
+    pub version: String,
+    pub protocol: u32,
+    pub max_players: u32,
+    pub online_players: u32,
+    pub players_list: Option<Vec<(String, String)>>,
+    pub description: String,
+    pub icon_hash: String,
+
+    pub mod_info: Option<(String, Vec<(String, String)>)>,
+    pub forge_data: Option<(Vec<(String, String, bool)>, Vec<(String, String)>, i32)>,
+
+    pub enforces_secure_chat: Option<bool>,
+    pub previews_chat: Option<bool>,
 }
+
+pub struct MCResult {}
 
 impl DatabaseResult {
     pub fn to_string(&self) -> String {
         let mut str = "".to_string();
 
         str += format!(
-            "\n{}\n- ports: [{}]\n- services: [{}]\n- responses: [{}]",
-            self.id,
-            join_nums(&self.ports, ","),
-            self.services.join(", "),
-            if let Ok(data) =
-                serde_json::from_str::<HashMap<i32, (String, String)>>(self.responses.as_str())
-            {
-                format!("{:?}", data)
-            } else {
-                self.responses.clone()
-            }
+            "\n{}\n- ports: [{}]\n- version: [{}]\n- protocol: [{}]\n- max_players: [{}]\n- online_players: [{}]\n- players_list: [{:?}]\n- description: [{}]\n- icon_hash: [{}]\n- mod_info: [{:?}]\n- forge_data: [{:?}]\n- enforces_secure_chat: [{:?}]\n- previews_chat: [{:?}]",
+            self.ip,
+            self.port,
+            self.version,
+            self.protocol,
+            self.max_players,
+            self.online_players,
+            self.players_list,
+            self.description,
+            self.icon_hash,
+            self.mod_info,
+            self.forge_data,
+            self.enforces_secure_chat,
+            self.previews_chat,
         )
         .as_str();
 
         str
     }
-    pub fn ports_to_string(&self) -> String {
-        return join_nums(&self.ports, ",");
+    pub fn get_addr(&self) -> String {
+        format!("{}:{}", self.ip, &self.port)
+    }
+    pub fn decode_players_list(data: String) -> Option<Vec<(String, String)>> {
+        let value = serde_json::to_value(data).unwrap();
+
+        // value.as_array().unwrap().iter().map(|a| a.t).collect()
+        Some(vec![(value.to_string(), "".to_string())])
+    }
+    pub fn decode_mod_info(data: String) -> Option<(String, Vec<(String, String)>)> {
+        let value = serde_json::to_value(data).unwrap();
+
+        // value.as_array().unwrap().iter().map(|a| a.t).collect()
+        Some(("".to_string(), vec![(value.to_string(), "".to_string())]))
+    }
+    pub fn decode_forge_data(
+        data: String,
+    ) -> Option<(Vec<(String, String, bool)>, Vec<(String, String)>, i32)> {
+        let value = serde_json::to_value(data).unwrap();
+
+        // value.as_array().unwrap().iter().map(|a| a.t).collect()
+        Some((
+            vec![(value.to_string(), "".to_string(), false)],
+            vec![("".to_string(), "".to_string())],
+            5,
+        ))
+    }
+    pub fn decode_option_bool(data: String) -> Option<bool> {
+        if data == "true" {
+            return Some(true);
+        } else if data == "false" {
+            return Some(false);
+        }
+        None
     }
 }
 
@@ -115,10 +162,18 @@ impl ResultDatabase {
         // Define column families for different indexes
 
         let column_families = vec![
-            "default".to_string(),
-            "ports".to_string(),
-            "services".to_string(),
-            "responses".to_string(),
+            "addr".to_string(),
+            "version".to_string(),
+            "protocol".to_string(),
+            "max_players".to_string(),
+            "online_players".to_string(),
+            "players_list".to_string(),
+            "description".to_string(),
+            "icon_hash".to_string(),
+            "mod_info".to_string(),
+            "forge_data".to_string(),
+            "enforces_secure_chat".to_string(),
+            "previews_chat".to_string(),
         ];
 
         Self {
@@ -128,45 +183,56 @@ impl ResultDatabase {
         }
     }
 
-    pub fn add_ping_results(
+    // pub fn add_ping_results(
+    //     &self,
+    //     results: &Vec<IpAddr>,
+    // ) -> Result<(), Box<dyn std::error::Error>> {
+    //     let mut string_rows = Vec::with_capacity(results.len()); // Pre-allocate capacity
+
+    //     for result in results {
+    //         string_rows.push(DatabaseResult {
+    //             ip: result.to_string(),
+    //             ports: vec![],
+    //             pub version: String,
+    //             pub protocol: i32,
+    //             pub max_players: usize,
+    //             pub online_players: usize,
+    //             pub players_list: Option<Vec<(String, String)>>,
+    //             pub description: String,
+    //             pub icon_hash: String,
+
+    //             pub mod_info: Option<Vec<(String, String, String)>>,
+    //             pub forge_data: Option<(Vec<(String, String, bool)>, Vec<(String, String)>, i32)>,
+
+    //             pub enforces_secure_chat: Option<bool>,
+    //             pub previews_chat: Option<bool>,
+    //         });
+    //     }
+
+    //     return self.save_rows(string_rows);
+    // }
+
+    // pub fn add_tcp_results(
+    //     &self,
+    //     results: &Vec<PortScanResult>,
+    // ) -> Result<(), Box<dyn std::error::Error>> {
+    //     let mut string_rows = Vec::with_capacity(results.len()); // Pre-allocate capacity
+
+    //     for result in results {
+    //         string_rows.push(result.to_database());
+    //     }
+
+    //     return self.save_rows(string_rows);
+    // }
+
+    pub fn add_data_row(
         &self,
-        results: &Vec<IpAddr>,
+        results: Vec<DatabaseResult>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut string_rows = Vec::with_capacity(results.len()); // Pre-allocate capacity
 
         for result in results {
-            string_rows.push(DatabaseResult {
-                id: result.to_string(),
-                ports: vec![],
-                services: Vec::new(),
-                responses: String::new(),
-            });
-        }
-
-        return self.save_rows(string_rows);
-    }
-
-    pub fn add_tcp_results(
-        &self,
-        results: &Vec<PortScanResult>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let mut string_rows = Vec::with_capacity(results.len()); // Pre-allocate capacity
-
-        for result in results {
-            string_rows.push(result.to_database());
-        }
-
-        return self.save_rows(string_rows);
-    }
-
-    pub fn add_service_results(
-        &self,
-        results: &Vec<ServiceScanResult>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let mut string_rows = Vec::with_capacity(results.len()); // Pre-allocate capacity
-
-        for result in results {
-            string_rows.push(result.to_database());
+            string_rows.push(result);
         }
 
         return self.save_rows(string_rows);
@@ -177,10 +243,19 @@ impl ResultDatabase {
         string_rows: Vec<DatabaseResult>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let db = Arc::new(DB::open_cf(&self.options, &self.path, &self.columns)?);
-        let cf_default = db.cf_handle(&self.columns[0]).unwrap();
-        let cf_ports = db.cf_handle(&self.columns[1]).unwrap();
-        let cf_services = db.cf_handle(&self.columns[2]).unwrap();
-        let cf_responses = db.cf_handle(&self.columns[3]).unwrap();
+
+        let cf_addr = db.cf_handle(&self.columns[0]).unwrap();
+        let cf_version = db.cf_handle(&self.columns[1]).unwrap();
+        let cf_protocol = db.cf_handle(&self.columns[2]).unwrap();
+        let cf_max_players = db.cf_handle(&self.columns[3]).unwrap();
+        let cf_online_players = db.cf_handle(&self.columns[4]).unwrap();
+        let cf_players_list = db.cf_handle(&self.columns[5]).unwrap();
+        let cf_description = db.cf_handle(&self.columns[6]).unwrap();
+        let cf_icon_hash = db.cf_handle(&self.columns[7]).unwrap();
+        let cf_mod_info = db.cf_handle(&self.columns[8]).unwrap();
+        let cf_forge_data = db.cf_handle(&self.columns[9]).unwrap();
+        let cf_enforces_secure_chat = db.cf_handle(&self.columns[10]).unwrap();
+        let cf_previews_chat = db.cf_handle(&self.columns[11]).unwrap();
 
         let start = Instant::now();
         let length = string_rows.len();
@@ -194,7 +269,6 @@ impl ResultDatabase {
         // Process chunks in parallel
         let elapsed = {
             let db_ref = Arc::clone(&db);
-            let cf_default_ref = cf_default;
 
             // Create batches in parallel but write them sequentially
             let batches: Vec<WriteBatch> = chunks
@@ -203,24 +277,55 @@ impl ResultDatabase {
                     let mut batch = WriteBatch::default();
 
                     for row in chunk {
-                        batch.put_cf(cf_default_ref, row.id.as_bytes(), &vec![]);
+                        let key = row.get_addr();
+                        println!("{}", key);
+                        let key = key.as_bytes();
 
-                        // Ports
+                        batch.put_cf(cf_addr, key, key);
+                        batch.put_cf(cf_version, key, row.version.as_bytes());
+                        batch.put_cf(cf_protocol, key, row.protocol.to_string().as_bytes());
+                        batch.put_cf(cf_max_players, key, row.max_players.to_string().as_bytes());
                         batch.put_cf(
-                            cf_ports,
-                            row.id.as_bytes(),
-                            row.ports_to_string().as_bytes(),
+                            cf_online_players,
+                            key,
+                            row.online_players.to_string().as_bytes(),
                         );
-
-                        // Services
                         batch.put_cf(
-                            cf_services,
-                            row.id.as_bytes(),
-                            row.services.join(",").into_bytes(),
+                            cf_players_list,
+                            key,
+                            serde_json::to_string(&row.players_list).unwrap().as_bytes(),
                         );
-
-                        // Responses
-                        batch.put_cf(cf_responses, row.id.as_bytes(), row.responses.into_bytes());
+                        batch.put_cf(
+                            cf_players_list,
+                            key,
+                            serde_json::to_string(&row.players_list).unwrap().as_bytes(),
+                        );
+                        batch.put_cf(cf_description, key, row.description.as_bytes());
+                        batch.put_cf(cf_icon_hash, key, row.icon_hash.as_bytes());
+                        batch.put_cf(
+                            cf_mod_info,
+                            key,
+                            serde_json::to_string(&row.mod_info).unwrap().as_bytes(),
+                        );
+                        batch.put_cf(
+                            cf_forge_data,
+                            key,
+                            serde_json::to_string(&row.forge_data).unwrap().as_bytes(),
+                        );
+                        batch.put_cf(
+                            cf_enforces_secure_chat,
+                            key,
+                            serde_json::to_string(&row.enforces_secure_chat)
+                                .unwrap()
+                                .as_bytes(),
+                        );
+                        batch.put_cf(
+                            cf_previews_chat,
+                            key,
+                            serde_json::to_string(&row.previews_chat)
+                                .unwrap()
+                                .as_bytes(),
+                        );
                     }
 
                     batch
@@ -255,6 +360,14 @@ impl ResultDatabase {
             db.cf_handle(&self.columns[1]).unwrap(),
             db.cf_handle(&self.columns[2]).unwrap(),
             db.cf_handle(&self.columns[3]).unwrap(),
+            db.cf_handle(&self.columns[4]).unwrap(),
+            db.cf_handle(&self.columns[5]).unwrap(),
+            db.cf_handle(&self.columns[6]).unwrap(),
+            db.cf_handle(&self.columns[7]).unwrap(),
+            db.cf_handle(&self.columns[8]).unwrap(),
+            db.cf_handle(&self.columns[9]).unwrap(),
+            db.cf_handle(&self.columns[10]).unwrap(),
+            db.cf_handle(&self.columns[11]).unwrap(),
         ];
 
         return self.fetch_row(&db, row, &cfs);
@@ -292,6 +405,14 @@ impl ResultDatabase {
             db.cf_handle(&self.columns[1]).unwrap(),
             db.cf_handle(&self.columns[2]).unwrap(),
             db.cf_handle(&self.columns[3]).unwrap(),
+            db.cf_handle(&self.columns[4]).unwrap(),
+            db.cf_handle(&self.columns[5]).unwrap(),
+            db.cf_handle(&self.columns[6]).unwrap(),
+            db.cf_handle(&self.columns[7]).unwrap(),
+            db.cf_handle(&self.columns[8]).unwrap(),
+            db.cf_handle(&self.columns[9]).unwrap(),
+            db.cf_handle(&self.columns[10]).unwrap(),
+            db.cf_handle(&self.columns[11]).unwrap(),
         ];
 
         let mut matching_keys: Vec<DatabaseResult> = Vec::new();
@@ -328,6 +449,14 @@ impl ResultDatabase {
             db.cf_handle(&self.columns[1]).unwrap(),
             db.cf_handle(&self.columns[2]).unwrap(),
             db.cf_handle(&self.columns[3]).unwrap(),
+            db.cf_handle(&self.columns[4]).unwrap(),
+            db.cf_handle(&self.columns[5]).unwrap(),
+            db.cf_handle(&self.columns[6]).unwrap(),
+            db.cf_handle(&self.columns[7]).unwrap(),
+            db.cf_handle(&self.columns[8]).unwrap(),
+            db.cf_handle(&self.columns[9]).unwrap(),
+            db.cf_handle(&self.columns[10]).unwrap(),
+            db.cf_handle(&self.columns[11]).unwrap(),
         ];
 
         let mut matching_keys: Vec<DatabaseResult> = Vec::new();
@@ -361,10 +490,12 @@ impl ResultDatabase {
         if queries.len() == 1 {
             // Return host if results include host
             match queries[0] {
-                QueryDataType::Host(row) => {
+                QueryDataType::Host(row, port) => {
                     return Ok(vec![
-                        self.get_row_by_host(row.to_string().as_str())
-                            .expect("Host Not Found"),
+                        self.get_row_by_host(
+                            format!("{}:{}", row.to_string().as_str(), port).as_str(),
+                        )
+                        .expect("Host Not Found"),
                     ]);
                 }
                 _ => {}
@@ -378,6 +509,14 @@ impl ResultDatabase {
             db.cf_handle(&self.columns[1]).unwrap(),
             db.cf_handle(&self.columns[2]).unwrap(),
             db.cf_handle(&self.columns[3]).unwrap(),
+            db.cf_handle(&self.columns[4]).unwrap(),
+            db.cf_handle(&self.columns[5]).unwrap(),
+            db.cf_handle(&self.columns[6]).unwrap(),
+            db.cf_handle(&self.columns[7]).unwrap(),
+            db.cf_handle(&self.columns[8]).unwrap(),
+            db.cf_handle(&self.columns[9]).unwrap(),
+            db.cf_handle(&self.columns[10]).unwrap(),
+            db.cf_handle(&self.columns[11]).unwrap(),
         ];
 
         let matching_key_bytes = search_parallel(&db, queries, &cfs);
@@ -397,14 +536,43 @@ impl ResultDatabase {
     fn fetch_row(&self, db: &DB, row_id: &str, cfs: &Vec<&ColumnFamily>) -> Option<DatabaseResult> {
         match db.get_cf(&cfs[0], row_id.as_bytes()) {
             Ok(Some(_)) => Some(DatabaseResult {
-                id: row_id.to_string(),
-                ports: split_nums(&self.row_to_string(db, row_id, &cfs[1]), ","),
-                services: self
+                ip: row_id.to_string().split(":").nth(0).unwrap().to_string(),
+                port: row_id
+                    .to_string()
+                    .split(":")
+                    .nth(1)
+                    .unwrap()
+                    .to_string()
+                    .parse::<u16>()
+                    .unwrap(),
+                version: self.row_to_string(db, row_id, &cfs[1]),
+                protocol: self
                     .row_to_string(db, row_id, &cfs[2])
-                    .split(",")
-                    .map(|a| a.to_string())
-                    .collect(),
-                responses: self.row_to_string(db, row_id, &cfs[3]),
+                    .parse::<u32>()
+                    .unwrap(),
+                max_players: self
+                    .row_to_string(db, row_id, &cfs[3])
+                    .parse::<u32>()
+                    .unwrap(),
+                online_players: self
+                    .row_to_string(db, row_id, &cfs[4])
+                    .parse::<u32>()
+                    .unwrap(),
+                players_list: DatabaseResult::decode_players_list(
+                    self.row_to_string(db, row_id, &cfs[5]),
+                ),
+                description: self.row_to_string(db, row_id, &cfs[6]),
+                icon_hash: self.row_to_string(db, row_id, &cfs[7]),
+                mod_info: DatabaseResult::decode_mod_info(self.row_to_string(db, row_id, &cfs[8])),
+                forge_data: DatabaseResult::decode_forge_data(
+                    self.row_to_string(db, row_id, &cfs[9]),
+                ),
+                enforces_secure_chat: DatabaseResult::decode_option_bool(
+                    self.row_to_string(db, row_id, &cfs[10]),
+                ),
+                previews_chat: DatabaseResult::decode_option_bool(
+                    self.row_to_string(db, row_id, &cfs[11]),
+                ),
             }),
             _ => None,
         }
@@ -421,18 +589,33 @@ impl ResultDatabase {
 
 #[derive(Debug)]
 pub enum QueryDataType {
-    Host(IpAddr),
-    Port(QueryType, i32),
-    Service(QueryType, String, String),
-    FullTextIncludes(String),
+    Host(IpAddr, u16),
+    Version(QueryType, String),
+    Protocol(QueryType, u32),
+    MaxPlayers(QueryType, u32),
+    OnlinePlayers(QueryType, u32),
+    PlayersList(QueryType, String),
+    Description(QueryType, String),
+    IconHash(QueryType, String),
+    ModInfo(QueryType, String),
+    ForgeData(QueryType, String),
+    SecureChat(QueryType, String),
+    PreviewsChat(QueryType, String),
 }
 
 #[derive(Debug)]
 pub enum QueryType {
     Equals,
+
     NotEquals,
     Includes,
     NotIncludes,
+
+    GreaterThan,
+    LessThan,
+
+    GreaterOrEqual,
+    LessThanOrEqual,
 }
 
 // /// Search function that takes query constraints and returns matching keys
@@ -487,7 +670,6 @@ pub enum QueryType {
 //     matching_keys
 // }
 
-/// Collect all keys from the ports column family as potential candidates
 fn collect_all_keys(db: &DB, cf: &ColumnFamily) -> Vec<Vec<u8>> {
     let mut keys = Vec::new();
     let iter = db.iterator_cf(cf, rocksdb::IteratorMode::Start);
@@ -501,183 +683,158 @@ fn collect_all_keys(db: &DB, cf: &ColumnFamily) -> Vec<Vec<u8>> {
     keys
 }
 
-/// Optimized search implementation with parallelism for large datasets
 pub fn search_parallel(
     db: &DB,
     queries: Vec<QueryDataType>,
     cfs: &Vec<&ColumnFamily>,
 ) -> Vec<Vec<u8>> {
     // Get column family handles
-    let cf_ports = cfs[1];
-    let cf_services = cfs[2];
-    let cf_responses = cfs[3];
-
-    // Collect all keys as potential candidates
-    let potential_keys = collect_all_keys(db, cf_ports);
+    let cf_addr = cfs[0];
+    let cf_version = cfs[1];
+    let cf_protocol = cfs[2];
+    let cf_max_players = cfs[3];
+    let cf_online_players = cfs[4];
+    let cf_players_list = cfs[5];
+    let cf_description = cfs[6];
+    let cf_icon_hash = cfs[7];
+    let cf_mod_info = cfs[8];
+    let cf_forge_data = cfs[9];
+    let cf_secure_chat = cfs[10];
+    let cf_previews_chat = cfs[11];
 
     // Partition queries by type
-    let port_queries: Vec<_> = queries
-        .iter()
-        .filter_map(|q| {
-            if let QueryDataType::Port(_, _) = q {
-                Some(q)
-            } else {
-                None
-            }
-        })
-        .collect();
+    let mut version_queries = Vec::new();
+    let mut protocol_queries = Vec::new();
+    let mut max_players_queries = Vec::new();
+    let mut online_players_queries = Vec::new();
+    let mut players_list_queries = Vec::new();
+    let mut description_queries = Vec::new();
+    let mut icon_hash_queries = Vec::new();
+    let mut mod_info_queries = Vec::new();
+    let mut forge_data_queries = Vec::new();
+    let mut secure_chat_queries = Vec::new();
+    let mut previews_chat_queries = Vec::new();
 
-    let service_queries: Vec<_> = queries
-        .iter()
-        .filter_map(|q| {
-            if let QueryDataType::Service(_, _, _) = q {
-                Some(q)
-            } else {
-                None
-            }
-        })
-        .collect();
+    for q in queries {
+        match q {
+            QueryDataType::Version(_, _) => version_queries.push(q),
+            QueryDataType::Protocol(_, _) => protocol_queries.push(q),
+            QueryDataType::MaxPlayers(_, _) => max_players_queries.push(q),
+            QueryDataType::OnlinePlayers(_, _) => online_players_queries.push(q),
+            QueryDataType::PlayersList(_, _) => players_list_queries.push(q),
+            QueryDataType::Description(_, _) => description_queries.push(q),
+            QueryDataType::IconHash(_, _) => icon_hash_queries.push(q),
+            QueryDataType::ModInfo(_, _) => mod_info_queries.push(q),
+            QueryDataType::ForgeData(_, _) => forge_data_queries.push(q),
+            QueryDataType::SecureChat(_, _) => secure_chat_queries.push(q),
+            QueryDataType::PreviewsChat(_, _) => previews_chat_queries.push(q),
 
-    let fulltext_queries: Vec<_> = queries
-        .iter()
-        .filter_map(|q| {
-            if let QueryDataType::FullTextIncludes(_) = q {
-                Some(q)
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    // Load all data for batch processing to minimize DB reads
-    let mut ports_data = HashMap::new();
-    let mut services_data = HashMap::new();
-    let mut responses_data = HashMap::new();
-
-    for key in &potential_keys {
-        if let Ok(Some(value)) = db.get_cf(cf_ports, key) {
-            ports_data.insert(key.clone(), value);
+            _ => {} // This should never happen
         }
+    }
 
-        if let Ok(Some(value)) = db.get_cf(cf_services, key) {
-            services_data.insert(key.clone(), value);
+    fn match_string_comparison(qt: &QueryType, test: &str, data: &str) -> bool {
+        match qt {
+            QueryType::Equals => data == test,
+            QueryType::NotEquals => data != test,
+            QueryType::Includes => data.contains(test),
+            QueryType::NotIncludes => !data.contains(test),
+            _ => false,
         }
+    }
 
-        if let Ok(Some(value)) = db.get_cf(cf_responses, key) {
-            responses_data.insert(key.clone(), value);
+    fn match_num_comparison(qt: &QueryType, test: &u32, data: &str) -> bool {
+        if let Ok(data) = data.parse::<u32>() {
+            match qt {
+                QueryType::Equals => &data == test,
+                QueryType::NotEquals => &data != test,
+                QueryType::GreaterThan => &data > test,
+                QueryType::LessThan => &data < test,
+                QueryType::GreaterOrEqual => &data >= test,
+                QueryType::LessThanOrEqual => &data <= test,
+                _ => false,
+            }
+        } else {
+            false
+        }
+    }
+
+    println!("{:?}", version_queries);
+
+    fn loop_queries(
+        db: &DB,
+        cf: &ColumnFamily,
+        key: &Vec<u8>,
+        queries: &Vec<QueryDataType>,
+    ) -> bool {
+        if let Ok(bytes) = db.get_cf(cf, key) {
+            if let Some(bytes) = bytes {
+                if let Ok(data) = std::str::from_utf8(&bytes) {
+                    queries.iter().all(|query| match query {
+                        QueryDataType::Host(_, _) => false,
+                        QueryDataType::Version(qt, test) => match_string_comparison(qt, test, data),
+                        QueryDataType::Protocol(qt, test) => match_num_comparison(qt, test, data),
+                        QueryDataType::MaxPlayers(qt, test) => match_num_comparison(qt, test, data),
+                        QueryDataType::OnlinePlayers(qt, test) => {
+                            match_num_comparison(qt, test, data)
+                        }
+                        QueryDataType::PlayersList(qt, test) => {
+                            match_string_comparison(qt, test, data)
+                        }
+                        QueryDataType::Description(qt, test) => {
+                            match_string_comparison(qt, test, data)
+                        }
+                        QueryDataType::IconHash(qt, test) => {
+                            match_string_comparison(qt, test, data)
+                        }
+                        QueryDataType::ModInfo(qt, test) => match_string_comparison(qt, test, data),
+                        QueryDataType::ForgeData(qt, test) => {
+                            match_string_comparison(qt, test, data)
+                        }
+                        QueryDataType::SecureChat(qt, test) => {
+                            match_string_comparison(qt, test, data)
+                        }
+                        QueryDataType::PreviewsChat(qt, test) => {
+                            match_string_comparison(qt, test, data)
+                        }
+                    })
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } else {
+            false
         }
     }
 
     // Process in parallel using rayon
-    let matching_keys: Vec<Vec<u8>> = potential_keys
+    let matching_keys: Vec<Vec<u8>> = collect_all_keys(db, cf_addr)
         .into_par_iter()
         .filter(|key| {
             // Check port queries
-            let ports_match = port_queries.is_empty()
-                || if let Some(ports_value) = ports_data.get(key) {
-                    if let Ok(ports_str) = std::str::from_utf8(ports_value) {
-                        let ports: Vec<i32> = ports_str
-                            .split(',')
-                            .filter_map(|p| p.trim().parse::<i32>().ok())
-                            .collect();
-
-                        port_queries.iter().all(|query| {
-                            if let QueryDataType::Port(query_type, port_num) = *query {
-                                match query_type {
-                                    QueryType::Equals => ports_str == port_num.to_string(),
-                                    QueryType::NotEquals => ports_str != port_num.to_string(),
-                                    QueryType::Includes => ports.contains(port_num),
-                                    QueryType::NotIncludes => !ports.contains(port_num),
-                                }
-                            } else {
-                                false
-                            }
-                        })
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
-
-            if !ports_match {
-                return false;
-            }
-
-            // Check service queries
-            let services_match = service_queries.is_empty()
-                || if let (Some(services_value), Some(responses_value)) =
-                    (services_data.get(key), responses_data.get(key))
-                {
-                    if let (Ok(_), Ok(responses_str)) = (
-                        std::str::from_utf8(services_value),
-                        std::str::from_utf8(responses_value),
-                    ) {
-                        if let Ok(responses_map) =
-                            serde_json::from_str::<HashMap<String, (String, String)>>(responses_str)
-                        {
-                            service_queries.iter().all(|query| {
-                                if let QueryDataType::Service(query_type, service_name, data_str) =
-                                    *query
-                                {
-                                    let data_str = &data_str.to_lowercase();
-                                    responses_map
-                                        .values()
-                                        .any(|(service, data)| match query_type {
-                                            QueryType::Equals => {
-                                                &service.to_lowercase() == service_name
-                                                    && data == data_str
-                                            }
-                                            QueryType::NotEquals => {
-                                                &service.to_lowercase() != service_name
-                                                    || data != data_str
-                                            }
-                                            QueryType::Includes => {
-                                                &service.to_lowercase() == service_name
-                                                    && data.to_lowercase().contains(data_str)
-                                            }
-                                            QueryType::NotIncludes => {
-                                                &service.to_lowercase() != service_name
-                                                    || !data.to_lowercase().contains(data_str)
-                                            }
-                                        })
-                                } else {
-                                    false
-                                }
-                            })
-                        } else {
-                            false
-                        }
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
-
-            if !services_match {
-                return false;
-            }
-
-            // Check fulltext queries
-            let fulltext_match = fulltext_queries.is_empty()
-                || if let Some(responses_value) = responses_data.get(key) {
-                    if let Ok(responses_str) = std::str::from_utf8(responses_value) {
-                        fulltext_queries.iter().all(|query| {
-                            if let QueryDataType::FullTextIncludes(search_str) = *query {
-                                responses_str.contains(search_str)
-                            } else {
-                                false
-                            }
-                        })
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
-
-            fulltext_match
+            (version_queries.is_empty() || loop_queries(db, cf_version, key, &version_queries))
+                && (protocol_queries.is_empty()
+                    || loop_queries(db, cf_protocol, key, &protocol_queries))
+                && (max_players_queries.is_empty()
+                    || loop_queries(db, cf_max_players, key, &max_players_queries))
+                && (online_players_queries.is_empty()
+                    || loop_queries(db, cf_online_players, key, &online_players_queries))
+                && (players_list_queries.is_empty()
+                    || loop_queries(db, cf_players_list, key, &players_list_queries))
+                && (description_queries.is_empty()
+                    || loop_queries(db, cf_description, key, &description_queries))
+                && (icon_hash_queries.is_empty()
+                    || loop_queries(db, cf_icon_hash, key, &icon_hash_queries))
+                && (mod_info_queries.is_empty()
+                    || loop_queries(db, cf_mod_info, key, &mod_info_queries))
+                && (forge_data_queries.is_empty()
+                    || loop_queries(db, cf_forge_data, key, &forge_data_queries))
+                && (secure_chat_queries.is_empty()
+                    || loop_queries(db, cf_secure_chat, key, &secure_chat_queries))
+                && (previews_chat_queries.is_empty()
+                    || loop_queries(db, cf_previews_chat, key, &previews_chat_queries))
         })
         .collect();
 

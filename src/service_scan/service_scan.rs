@@ -1,4 +1,5 @@
 use std::{
+    cmp::min,
     collections::HashMap,
     io::{Read, Write},
     net::{IpAddr, SocketAddr, TcpStream},
@@ -14,117 +15,68 @@ use crate::{
     database::DatabaseResult, port_scan::port_scan::PortScanResult, service_scan::tcp_http,
 };
 
-use super::{services::SERVICE_PATTERNS, tcp_https, tcp_minecraft};
+use super::tcp_minecraft;
 
-#[derive(Debug, Clone)]
-pub struct ServiceScanResult {
-    pub ip: IpAddr,
-    pub open_ports: Vec<i32>,
-    pub services: HashMap<i32, (String, String)>,
-}
+// #[derive(Debug, Clone)]
+// pub struct ServiceScanResult {
+//     pub ip: IpAddr,
+//     pub open_ports: Vec<i32>,
+//     pub services: HashMap<i32, (String, String)>,
+// }
 
-impl ServiceScanResult {
-    fn new(ip: IpAddr) -> Self {
-        ServiceScanResult {
-            ip,
-            open_ports: Vec::new(),
-            services: HashMap::new(),
-        }
-    }
-    pub fn to_database(&self) -> DatabaseResult {
-        let data = serde_json::to_string(&self.services).unwrap_or(String::new());
+// impl ServiceScanResult {
+//     fn new(ip: IpAddr) -> Self {
+//         ServiceScanResult {
+//             ip,
+//             open_ports: Vec::new(),
+//             services: HashMap::new(),
+//         }
+//     }
+//     pub fn to_database(&self) -> DatabaseResult {
+//         let data = serde_json::to_string(&self.services).unwrap_or(String::new());
 
-        let mut services = Vec::new();
+//         let mut services = Vec::new();
 
-        for key in self.services.keys() {
-            services.push(self.services.get(key).unwrap().0.clone());
-        }
+//         for key in self.services.keys() {
+//             services.push(self.services.get(key).unwrap().0.clone());
+//         }
 
-        services.sort();
-        services.dedup();
+//         services.sort();
+//         services.dedup();
 
-        // println!("{}", data);
-        DatabaseResult {
-            id: self.ip.to_string(),
-            ports: self.open_ports.clone(),
-            services,
-            responses: data,
-        }
-    }
-}
+//         // println!("{}", data);
+//         DatabaseResult {
+//             ip: self.ip.to_string(),
+//             ports: self.open_ports.clone(),
+//             services,
+//             responses: data,
+//         }
+//     }
+// }
 
-pub fn identify(ip: IpAddr, port: &i32, timeout: Duration) -> (String, String) {
-    let e = || {
-        // // println!("secondary1");
-        // let (service, data) =
-        //     basic_identify(ip, port, timeout).unwrap_or(("tcp".to_string(), "".to_string()));
-
-        // // println!("secondary2");
-
-        // (match service.as_str() {
-        //     "http" => tuple_or_none("http", tcp_http::scan(ip, port, timeout)),
-        //     "https" => tuple_or_none("https", tcp_https::scan(ip, port, timeout)),
-        //     "minecraft" => tuple_or_none("minecraft", tcp_minecraft::scan(ip, port, timeout)),
-        //     _ => None,
-        // })
-        // .unwrap_or((service, data))
-        basic_identify(ip, port, timeout).unwrap_or(("tcp".to_string(), "".to_string()))
-    };
-
+pub fn identify(ip: IpAddr, port: &i32, timeout: Duration) -> Option<DatabaseResult> {
     // println!("primary");
 
-    (match port {
-        80 | 8080 | 8081 | 8082 | 8083 | 8084 | 8085 | 8086 | 8087 | 8088 | 8089 => {
-            // println!("http");
-            tuple_or_none("http", tcp_http::scan(ip, port, timeout))
-        }
-        443 | 8443 => {
-            // println!("https");
-            tuple_or_none("https", tcp_https::scan(ip, port, timeout))
-        }
-        25565 | 25575 => {
-            // println!("minecraft");
-            tuple_or_none("minecraft", tcp_minecraft::scan(ip, port, timeout))
-        }
+    tcp_minecraft::scan(ip, port, timeout).ok()
 
-        _ => None,
-    })
-    .unwrap_or(e())
     // basic_identify(ip, port, timeout).unwrap_or(("tcp".to_string(), "".to_string()))
-}
-
-fn tuple_or_none(
-    tag: &str,
-    data: Result<String, Box<dyn std::error::Error>>,
-) -> Option<(String, String)> {
-    if let Ok(data) = data {
-        Some((tag.to_string(), data))
-    } else {
-        None
-    }
 }
 
 pub fn scan_services(
     port_scan_results: Vec<PortScanResult>,
     num_threads: usize,
     timeout: Duration,
-) -> Vec<ServiceScanResult> {
-    let mut host_port_count: u64 = 0;
-    let results: Arc<Mutex<Vec<ServiceScanResult>>> = Arc::new(Mutex::new(
-        port_scan_results
-            .iter()
-            .map(|result| {
-                host_port_count += result.open_ports.len() as u64;
-                ServiceScanResult::new(result.ip)
-            })
-            .collect(),
-    ));
+) -> Vec<DatabaseResult> {
+    let mut host_port_count: usize = 0;
 
-    let mut host_port: Vec<(IpAddr, i32)> = Vec::with_capacity(host_port_count as usize);
+    let results: Arc<Mutex<Vec<DatabaseResult>>> = Arc::new(Mutex::new(Vec::new()));
+
+    let mut host_port: Vec<(IpAddr, i32)> = Vec::new();
     for host in &port_scan_results {
         for port in &host.open_ports {
             host_port.push((host.ip, port.clone()));
         }
+        host_port_count += host.open_ports.len();
     }
 
     host_port.shuffle(&mut rand::rng());
@@ -133,7 +85,7 @@ pub fn scan_services(
 
     let mut handles = Vec::new();
     let pb = Arc::new(
-        ProgressBar::new(host_port_count).with_style(
+        ProgressBar::new(host_port_count as u64).with_style(
             ProgressStyle::with_template(
                 "[{msg}] {wide_bar:.magenta/red} {pos}/{len} ({eta_precise})",
             )
@@ -143,7 +95,7 @@ pub fn scan_services(
 
     // Create a thread for each chunk of IPs
     // let chunks = split_ips_into_chunks(port_scan_results, num_threads);
-    for i in 0..=num_threads {
+    for i in 0..=min(num_threads, host_port_count) {
         // println!("Thread {},{}", i, chunk.len());
         // let chunk_hosts = chunk.clone();
         let thread_hosts = Arc::clone(&host_port);
@@ -173,18 +125,20 @@ pub fn scan_services(
                 let ip = host.0;
                 let port = host.1;
 
-                println!("{}, {}, {}", i, ip, port);
+                // println!("{}, {}, {}", i, ip, port);
 
                 // Try to identify the service on the port
                 // println!("Thread {} stall 2", i);
-                let (service_name, banner) = identify(ip, &port, thread_timeout);
+                let result = identify(ip, &port, thread_timeout);
                 // println!("Thread {} stall 3", i);
 
-                let mut results_guard = thread_results.lock().unwrap();
-                if let Some(result) = results_guard.iter_mut().find(|r| r.ip == ip) {
-                    result.open_ports.push(port);
-                    result.services.insert(port, (service_name, banner));
+                if let Some(result) = result {
+                    let mut results_guard = thread_results.lock().unwrap();
+                    println!("{}, {}", i, result.to_string());
+                    results_guard.push(result);
+                    std::mem::drop(results_guard);
                 }
+
                 // println!("Thread {} stall 4", i);
 
                 thread_pb.inc(1);
@@ -276,61 +230,26 @@ fn try_connect(ip: IpAddr, port: &i32, timeout: Duration, probe: &[u8]) -> Optio
     }
 }
 
-fn basic_identify(ip: IpAddr, port: &i32, timeout: Duration) -> Option<(String, String)> {
-    // println!("Start try_connect");
-    // Try a simple connection with no probe as last resort
-    if let Some(response) = try_connect(ip, port, timeout, b"\x00\n") {
-        if !response.is_empty() {
-            if let Some(service_name) = identify_service_from_response(&response) {
-                return Some((
-                    service_name.to_string(),
-                    String::from_utf8_lossy(response.as_slice()).to_string(),
-                ));
-            }
-        }
+// fn basic_identify(ip: IpAddr, port: &i32, timeout: Duration) -> Option<(String, String)> {
+//     // println!("Start try_connect");
+//     // Try a simple connection with no probe as last resort
+//     if let Some(response) = try_connect(ip, port, timeout, b"\x00\n") {
+//         if !response.is_empty() {
+//             if let Some(service_name) = identify_service_from_response(&response) {
+//                 return Some((
+//                     service_name.to_string(),
+//                     String::from_utf8_lossy(response.as_slice()).to_string(),
+//                 ));
+//             }
+//         }
 
-        // println!("End try_connect1");
+//         // println!("End try_connect1");
 
-        // Port is open but service couldn't be identified
-        return Some(("tcp".to_string(), "".to_string()));
-    }
+//         // Port is open but service couldn't be identified
+//         return Some(("tcp".to_string(), "".to_string()));
+//     }
 
-    // println!("Start try_connect2");
+//     // println!("Start try_connect2");
 
-    None
-}
-
-fn identify_service_from_response(response: &[u8]) -> Option<&str> {
-    // Convert response to string if possible
-    if let Ok(response_str) = std::str::from_utf8(response) {
-        // Try to match against known patterns
-        for (pattern, service_name) in SERVICE_PATTERNS.iter() {
-            if pattern.is_match(response_str) {
-                return Some(service_name);
-            }
-        }
-    }
-
-    // // For binary responses, check for pattern matches
-    // // Check for SSL/TLS
-    // if response.len() >= 3 && response[0] == 0x16 && (response[1] == 0x03 || response[1] == 0x02) {
-    //     return Some("ssl/tls");
-    // }
-
-    // // Check for MySQL protocol
-    // if response.len() >= 5 && response[0] == 0x4a && response[1] == 0x00 {
-    //     return Some("mysql");
-    // }
-
-    // // Check for MongoDB wire protocol
-    // if response.len() >= 4
-    //     && response[0] == 0x02
-    //     && response[1] == 0x00
-    //     && response[2] == 0x00
-    //     && response[3] == 0x00
-    // {
-    //     return Some("mongodb");
-    // }
-
-    None
-}
+//     None
+// }

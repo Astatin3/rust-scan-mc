@@ -27,8 +27,9 @@ pub fn parse_ip_targets(targets: &str) -> Result<Vec<IpAddr>, Box<dyn std::error
             parse_ip_range(target, &mut ips)?;
         } else {
             // Single IP
-            let ip = IpAddr::from_str(target)?;
-            ips.push(ip);
+            if let Ok(ip) = IpAddr::from_str(target) {
+                ips.push(ip);
+            }
         }
     }
 

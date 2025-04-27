@@ -16,12 +16,12 @@ impl PortScanResult {
             // data: HashMap::new(),
         }
     }
-    pub fn to_database(&self) -> DatabaseResult {
-        DatabaseResult {
-            id: self.ip.to_string(),
-            ports: (*self.open_ports).to_vec(),
-            services: Vec::new(),
-            responses: String::new(),
-        }
-    }
+    // pub fn to_database(&self) -> DatabaseResult {
+    //     DatabaseResult {
+    //         ip: self.ip.to_string(),
+    //         ports: (*self.open_ports).to_vec(),
+    //         services: Vec::new(),
+    //         responses: String::new(),
+    //     }
+    // }
 }
