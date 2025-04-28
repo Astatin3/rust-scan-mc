@@ -10,12 +10,12 @@ fn try_parse_host(query: &str) -> Option<QueryDataType> {
         let ip = IpAddr::from_str(split.nth(0).unwrap());
         if let Some(port) = &split.nth(1) {
             if let (Ok(ip), Ok(port)) = (ip, port.parse::<u16>()) {
-                return Some(QueryDataType::Host(ip, port));
+                return Some(QueryDataType::Addr(ip, port));
             }
         }
     }
     if let Ok(ip) = IpAddr::from_str(&query) {
-        return Some(QueryDataType::Host(ip, 25565));
+        return Some(QueryDataType::Addr(ip, 25565));
     }
 
     None
@@ -67,6 +67,20 @@ pub fn search(query: String) -> Result<Vec<QueryDataType>, Box<dyn std::error::E
             }
 
             (match tag.as_str() {
+                "port" => {
+                    results.push(QueryDataType::Port(
+                        get_equals_type_num(&delim),
+                        data.parse::<u32>().expect("Error parsing port"),
+                    ));
+                    Ok(())
+                }
+                "scantime" => {
+                    results.push(QueryDataType::ScanTime(
+                        get_equals_type_num(&delim),
+                        data.parse::<u32>().expect("Error parsing time"),
+                    ));
+                    Ok(())
+                }
                 "version" => {
                     results.push(QueryDataType::Version(get_equals_type_str(&delim), data));
                     Ok(())

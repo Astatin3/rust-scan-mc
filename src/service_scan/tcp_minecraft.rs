@@ -3,10 +3,10 @@ use serde_json::json;
 use sha256::digest;
 use std::{
     net::{IpAddr, SocketAddr, TcpStream},
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use crate::database::DatabaseResult;
+use crate::database::{DatabaseResult, EPOCH_2025};
 
 pub fn scan(
     ip: IpAddr,
@@ -30,6 +30,11 @@ pub fn scan(
     Ok(DatabaseResult {
         ip: ip.to_string(),
         port: port as u16,
+        time_scanned: (SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            - EPOCH_2025 as u64) as u32,
         version: pong.version,
         protocol: pong.protocol as u32,
         max_players: pong.max_players as u32,

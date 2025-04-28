@@ -2,10 +2,12 @@ use std::{
     cmp::min,
     env,
     net::IpAddr,
+    str::FromStr,
     time::{Duration, Instant},
 };
 
 use parse_ip_range::parse_ip_targets;
+use rand::{rng, seq::SliceRandom};
 use untitled::{
     database::ResultDatabase, online_scan, parse_ip_range, port_scan::tcp_scan, query,
     service_scan::service_scan::scan_services,
@@ -35,6 +37,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let _ = scan(database, args[2].to_string());
             }
         }
+        "rescan" => rescan(database, args)?,
         // "search" => {
         //     if args.len() != 4 {
         //         println!("Invalid Usage!");
@@ -175,6 +178,56 @@ fn scan(database: ResultDatabase, arg: String) -> Result<(), Box<dyn std::error:
         let service_results = scan_services(tcp_results, min(50, up_len), Duration::from_secs(1));
         println!("Finished service scan");
         let _ = database.add_data_row(service_results);
+    }
+
+    Ok(())
+}
+
+fn rescan(database: ResultDatabase, args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
+    let start = Instant::now();
+    if let Ok(query) = query::search(args[2..].join(" ")) {
+        let results = database.search(query);
+        if let Ok(results) = results {
+            let len = results.len();
+
+            let mut hosts: Vec<IpAddr> = Vec::new();
+
+            for result in results {
+                println!("{}", result.to_string());
+                hosts.push(IpAddr::from_str(result.ip.as_str()).unwrap());
+            }
+            println!("{} results in {}ms", len, start.elapsed().as_millis());
+
+            hosts.sort();
+            hosts.dedup();
+            hosts.shuffle(&mut rng());
+
+            let chunks = hosts.chunks(BATCH_SIZE);
+            let num_chunks = chunks.len();
+            for (i, hosts) in chunks.enumerate() {
+                let hosts = hosts.to_vec();
+                let length = hosts.len();
+
+                println!("Scanning chunk {}/{} ({} hosts)", i + 1, num_chunks, length);
+
+                let up_hosts: Vec<IpAddr> = online_scan::ping_scanner::ping_scan(hosts).unwrap();
+                let up_len = up_hosts.len();
+                println!(
+                    "Finished Pinging! {} Scanned, {} Up",
+                    length,
+                    up_hosts.len()
+                );
+
+                let tcp_results =
+                    tcp_scan::tcp_scan(up_hosts, PORTS_1.to_vec(), Duration::from_secs(3));
+                println!("Finished port scan");
+
+                let service_results =
+                    scan_services(tcp_results, min(50, up_len), Duration::from_secs(1));
+                println!("Finished service scan");
+                let _ = database.add_data_row(service_results);
+            }
+        }
     }
 
     Ok(())

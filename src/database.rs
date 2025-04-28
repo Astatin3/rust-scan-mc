@@ -1,5 +1,11 @@
-use std::{collections::HashMap, net::IpAddr, sync::Arc, time::Instant};
+use std::{
+    collections::HashMap,
+    net::IpAddr,
+    sync::Arc,
+    time::{Duration, Instant, UNIX_EPOCH},
+};
 
+use chrono::{DateTime, Utc};
 use regex::Regex;
 use rocksdb::{Cache, ColumnFamily, DB, IteratorMode, Options, WriteBatch};
 use serde::{Deserialize, Serialize};
@@ -11,6 +17,7 @@ const BLOCK_CACHE_SIZE_MB: usize = 512; // 512MB block cache
 const WRITE_BUFFER_SIZE_MB: usize = 64; // 64MB write buffer
 const NUM_PARALLEL_THREADS: usize = 8; // Number of threads for parallel operations
 const BATCH_SIZE: usize = 1000; // Batch size for writes
+pub const EPOCH_2025: u32 = 1735689600; // So i don't have to use u64
 
 pub struct ResultDatabase {
     pub path: String,
@@ -22,6 +29,7 @@ pub struct ResultDatabase {
 pub struct DatabaseResult {
     pub ip: String,
     pub port: u16,
+    pub time_scanned: u32,
 
     pub version: String,
     pub protocol: u32,
@@ -45,9 +53,10 @@ impl DatabaseResult {
         let mut str = "".to_string();
 
         str += format!(
-            "\n{}\n- ports: [{}]\n- version: [{}]\n- protocol: [{}]\n- max_players: [{}]\n- online_players: [{}]\n- players_list: [{:?}]\n- description: [{}]\n- icon_hash: [{}]\n- mod_info: [{:?}]\n- forge_data: [{:?}]\n- enforces_secure_chat: [{:?}]\n- previews_chat: [{:?}]",
+            "\n{}:{}\n- Last scanned: {}\n- version: [{}]\n- protocol: [{}]\n- max_players: [{}]\n- online_players: [{}]\n- players_list: [{:?}]\n- description: [{}]\n- icon_hash: [{}]\n- mod_info: [{:?}]\n- forge_data: [{:?}]\n- enforces_secure_chat: [{:?}]\n- previews_chat: [{:?}]",
             self.ip,
             self.port,
+            DateTime::<Utc>::from(UNIX_EPOCH + Duration::from_secs((self.time_scanned + EPOCH_2025) as u64)).format("%Y-%m-%d %H:%M:%S.%f").to_string(),
             self.version,
             self.protocol,
             self.max_players,
@@ -163,6 +172,7 @@ impl ResultDatabase {
 
         let column_families = vec![
             "addr".to_string(),
+            "time".to_string(),
             "version".to_string(),
             "protocol".to_string(),
             "max_players".to_string(),
@@ -245,17 +255,18 @@ impl ResultDatabase {
         let db = Arc::new(DB::open_cf(&self.options, &self.path, &self.columns)?);
 
         let cf_addr = db.cf_handle(&self.columns[0]).unwrap();
-        let cf_version = db.cf_handle(&self.columns[1]).unwrap();
-        let cf_protocol = db.cf_handle(&self.columns[2]).unwrap();
-        let cf_max_players = db.cf_handle(&self.columns[3]).unwrap();
-        let cf_online_players = db.cf_handle(&self.columns[4]).unwrap();
-        let cf_players_list = db.cf_handle(&self.columns[5]).unwrap();
-        let cf_description = db.cf_handle(&self.columns[6]).unwrap();
-        let cf_icon_hash = db.cf_handle(&self.columns[7]).unwrap();
-        let cf_mod_info = db.cf_handle(&self.columns[8]).unwrap();
-        let cf_forge_data = db.cf_handle(&self.columns[9]).unwrap();
-        let cf_enforces_secure_chat = db.cf_handle(&self.columns[10]).unwrap();
-        let cf_previews_chat = db.cf_handle(&self.columns[11]).unwrap();
+        let cf_time = db.cf_handle(&self.columns[1]).unwrap();
+        let cf_version = db.cf_handle(&self.columns[2]).unwrap();
+        let cf_protocol = db.cf_handle(&self.columns[3]).unwrap();
+        let cf_max_players = db.cf_handle(&self.columns[4]).unwrap();
+        let cf_online_players = db.cf_handle(&self.columns[5]).unwrap();
+        let cf_players_list = db.cf_handle(&self.columns[6]).unwrap();
+        let cf_description = db.cf_handle(&self.columns[7]).unwrap();
+        let cf_icon_hash = db.cf_handle(&self.columns[8]).unwrap();
+        let cf_mod_info = db.cf_handle(&self.columns[9]).unwrap();
+        let cf_forge_data = db.cf_handle(&self.columns[10]).unwrap();
+        let cf_enforces_secure_chat = db.cf_handle(&self.columns[11]).unwrap();
+        let cf_previews_chat = db.cf_handle(&self.columns[12]).unwrap();
 
         let start = Instant::now();
         let length = string_rows.len();
@@ -282,6 +293,7 @@ impl ResultDatabase {
                         let key = key.as_bytes();
 
                         batch.put_cf(cf_addr, key, key);
+                        batch.put_cf(cf_time, key, row.time_scanned.to_string().as_bytes());
                         batch.put_cf(cf_version, key, row.version.as_bytes());
                         batch.put_cf(cf_protocol, key, row.protocol.to_string().as_bytes());
                         batch.put_cf(cf_max_players, key, row.max_players.to_string().as_bytes());
@@ -368,6 +380,7 @@ impl ResultDatabase {
             db.cf_handle(&self.columns[9]).unwrap(),
             db.cf_handle(&self.columns[10]).unwrap(),
             db.cf_handle(&self.columns[11]).unwrap(),
+            db.cf_handle(&self.columns[12]).unwrap(),
         ];
 
         return self.fetch_row(&db, row, &cfs);
@@ -413,6 +426,7 @@ impl ResultDatabase {
             db.cf_handle(&self.columns[9]).unwrap(),
             db.cf_handle(&self.columns[10]).unwrap(),
             db.cf_handle(&self.columns[11]).unwrap(),
+            db.cf_handle(&self.columns[12]).unwrap(),
         ];
 
         let mut matching_keys: Vec<DatabaseResult> = Vec::new();
@@ -457,6 +471,7 @@ impl ResultDatabase {
             db.cf_handle(&self.columns[9]).unwrap(),
             db.cf_handle(&self.columns[10]).unwrap(),
             db.cf_handle(&self.columns[11]).unwrap(),
+            db.cf_handle(&self.columns[12]).unwrap(),
         ];
 
         let mut matching_keys: Vec<DatabaseResult> = Vec::new();
@@ -490,7 +505,7 @@ impl ResultDatabase {
         if queries.len() == 1 {
             // Return host if results include host
             match queries[0] {
-                QueryDataType::Host(row, port) => {
+                QueryDataType::Addr(row, port) => {
                     return Ok(vec![
                         self.get_row_by_host(
                             format!("{}:{}", row.to_string().as_str(), port).as_str(),
@@ -517,6 +532,7 @@ impl ResultDatabase {
             db.cf_handle(&self.columns[9]).unwrap(),
             db.cf_handle(&self.columns[10]).unwrap(),
             db.cf_handle(&self.columns[11]).unwrap(),
+            db.cf_handle(&self.columns[12]).unwrap(),
         ];
 
         let matching_key_bytes = search_parallel(&db, queries, &cfs);
@@ -545,33 +561,37 @@ impl ResultDatabase {
                     .to_string()
                     .parse::<u16>()
                     .unwrap(),
-                version: self.row_to_string(db, row_id, &cfs[1]),
-                protocol: self
-                    .row_to_string(db, row_id, &cfs[2])
+                time_scanned: self
+                    .row_to_string(db, row_id, &cfs[1])
                     .parse::<u32>()
                     .unwrap(),
-                max_players: self
+                version: self.row_to_string(db, row_id, &cfs[2]),
+                protocol: self
                     .row_to_string(db, row_id, &cfs[3])
                     .parse::<u32>()
                     .unwrap(),
-                online_players: self
+                max_players: self
                     .row_to_string(db, row_id, &cfs[4])
                     .parse::<u32>()
                     .unwrap(),
+                online_players: self
+                    .row_to_string(db, row_id, &cfs[5])
+                    .parse::<u32>()
+                    .unwrap(),
                 players_list: DatabaseResult::decode_players_list(
-                    self.row_to_string(db, row_id, &cfs[5]),
+                    self.row_to_string(db, row_id, &cfs[6]),
                 ),
-                description: self.row_to_string(db, row_id, &cfs[6]),
-                icon_hash: self.row_to_string(db, row_id, &cfs[7]),
-                mod_info: DatabaseResult::decode_mod_info(self.row_to_string(db, row_id, &cfs[8])),
+                description: self.row_to_string(db, row_id, &cfs[7]),
+                icon_hash: self.row_to_string(db, row_id, &cfs[8]),
+                mod_info: DatabaseResult::decode_mod_info(self.row_to_string(db, row_id, &cfs[9])),
                 forge_data: DatabaseResult::decode_forge_data(
-                    self.row_to_string(db, row_id, &cfs[9]),
-                ),
-                enforces_secure_chat: DatabaseResult::decode_option_bool(
                     self.row_to_string(db, row_id, &cfs[10]),
                 ),
-                previews_chat: DatabaseResult::decode_option_bool(
+                enforces_secure_chat: DatabaseResult::decode_option_bool(
                     self.row_to_string(db, row_id, &cfs[11]),
+                ),
+                previews_chat: DatabaseResult::decode_option_bool(
+                    self.row_to_string(db, row_id, &cfs[12]),
                 ),
             }),
             _ => None,
@@ -589,7 +609,10 @@ impl ResultDatabase {
 
 #[derive(Debug)]
 pub enum QueryDataType {
-    Host(IpAddr, u16),
+    Addr(IpAddr, u16),
+    Host(QueryType, String),
+    Port(QueryType, u32),
+    ScanTime(QueryType, u32),
     Version(QueryType, String),
     Protocol(QueryType, u32),
     MaxPlayers(QueryType, u32),
@@ -690,19 +713,24 @@ pub fn search_parallel(
 ) -> Vec<Vec<u8>> {
     // Get column family handles
     let cf_addr = cfs[0];
-    let cf_version = cfs[1];
-    let cf_protocol = cfs[2];
-    let cf_max_players = cfs[3];
-    let cf_online_players = cfs[4];
-    let cf_players_list = cfs[5];
-    let cf_description = cfs[6];
-    let cf_icon_hash = cfs[7];
-    let cf_mod_info = cfs[8];
-    let cf_forge_data = cfs[9];
-    let cf_secure_chat = cfs[10];
-    let cf_previews_chat = cfs[11];
+    let cf_scan_time = cfs[1];
+    let cf_version = cfs[2];
+    let cf_protocol = cfs[3];
+    let cf_max_players = cfs[4];
+    let cf_online_players = cfs[5];
+    let cf_players_list = cfs[6];
+    let cf_description = cfs[7];
+    let cf_icon_hash = cfs[8];
+    let cf_mod_info = cfs[9];
+    let cf_forge_data = cfs[10];
+    let cf_secure_chat = cfs[11];
+    let cf_previews_chat = cfs[12];
 
     // Partition queries by type
+    let mut host_queries = Vec::new();
+    let mut port_queries = Vec::new();
+
+    let mut time_queries = Vec::new();
     let mut version_queries = Vec::new();
     let mut protocol_queries = Vec::new();
     let mut max_players_queries = Vec::new();
@@ -717,6 +745,9 @@ pub fn search_parallel(
 
     for q in queries {
         match q {
+            QueryDataType::Host(_, _) => host_queries.push(q),
+            QueryDataType::Port(_, _) => port_queries.push(q),
+            QueryDataType::ScanTime(_, _) => time_queries.push(q),
             QueryDataType::Version(_, _) => version_queries.push(q),
             QueryDataType::Protocol(_, _) => protocol_queries.push(q),
             QueryDataType::MaxPlayers(_, _) => max_players_queries.push(q),
@@ -771,7 +802,14 @@ pub fn search_parallel(
             if let Some(bytes) = bytes {
                 if let Ok(data) = std::str::from_utf8(&bytes) {
                     queries.iter().all(|query| match query {
-                        QueryDataType::Host(_, _) => false,
+                        QueryDataType::Addr(_, _) => false,
+                        QueryDataType::Host(qt, test) => {
+                            match_string_comparison(qt, test, data.split(":").nth(0).unwrap_or(""))
+                        }
+                        QueryDataType::Port(qt, test) => {
+                            match_num_comparison(qt, test, data.split(":").nth(1).unwrap_or(""))
+                        }
+                        QueryDataType::ScanTime(qt, test) => match_num_comparison(qt, test, data),
                         QueryDataType::Version(qt, test) => match_string_comparison(qt, test, data),
                         QueryDataType::Protocol(qt, test) => match_num_comparison(qt, test, data),
                         QueryDataType::MaxPlayers(qt, test) => match_num_comparison(qt, test, data),
@@ -814,7 +852,11 @@ pub fn search_parallel(
         .into_par_iter()
         .filter(|key| {
             // Check port queries
-            (version_queries.is_empty() || loop_queries(db, cf_version, key, &version_queries))
+            (host_queries.is_empty() || loop_queries(db, cf_addr, key, &host_queries))
+                && (port_queries.is_empty() || loop_queries(db, cf_addr, key, &port_queries))
+                && (time_queries.is_empty() || loop_queries(db, cf_scan_time, key, &time_queries))
+                && (version_queries.is_empty()
+                    || loop_queries(db, cf_version, key, &version_queries))
                 && (protocol_queries.is_empty()
                     || loop_queries(db, cf_protocol, key, &protocol_queries))
                 && (max_players_queries.is_empty()
