@@ -21,23 +21,21 @@ fn try_parse_host(query: &str) -> Option<QueryDataType> {
     None
 }
 
-pub fn search(query: String) -> Result<Vec<QueryDataType>, Box<dyn std::error::Error>> {
-    if let Some(host) = try_parse_host(&query) {
+pub fn search(query: Vec<String>) -> Result<Vec<QueryDataType>, Box<dyn std::error::Error>> {
+    if let Some(host) = try_parse_host(&query.join("")) {
         return Ok(vec![host]);
     }
-
-    let split = query.split(" ");
 
     let delim = Regex::new("(?:!=|<=|>=|[=:+-><])")?;
 
     let mut results = Vec::new();
 
-    for query in split {
-        if let Some(host) = try_parse_host(query) {
+    for query in query {
+        if let Some(host) = try_parse_host(&query) {
             return Ok(vec![host]);
         }
 
-        if let Some(m) = delim.find(query) {
+        if let Some(m) = delim.find(&query) {
             let tag = query[0..m.start()].to_string().to_lowercase();
             let delim = query[m.start()..m.end()].to_string();
             let data = query[m.end()..query.len()].to_string();

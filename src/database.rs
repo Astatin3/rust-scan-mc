@@ -790,8 +790,6 @@ pub fn search_parallel(
         }
     }
 
-    println!("{:?}", version_queries);
-
     fn loop_queries(
         db: &DB,
         cf: &ColumnFamily,

@@ -187,7 +187,13 @@ fn split_ips_into_chunks(ips: Vec<PortScanResult>, num_chunks: usize) -> Vec<Vec
 }
 
 // Connect to an IP:port and send a probe
-fn try_connect(ip: IpAddr, port: &i32, timeout: Duration, probe: &[u8]) -> Option<Vec<u8>> {
+fn try_connect(
+    ip: IpAddr,
+    port: &i32,
+    timeout: Duration,
+    probe: &[u8],
+    delay: u64,
+) -> Option<Vec<u8>> {
     let addr = SocketAddr::new(ip, *port as u16);
 
     match TcpStream::connect_timeout(&addr, timeout) {

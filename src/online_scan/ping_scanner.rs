@@ -15,11 +15,14 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-static TIMEOUT: Duration = Duration::from_secs(3);
 // static MAX_PINGS_PER_SECOND: u64 = 10000;
-static SEND_DELAY_NANOS: Duration = Duration::from_micros(10);
+// static SEND_DELAY_NANOS: Duration = Duration::from_micros(10);
 
-pub fn ping_scan(hosts: Vec<IpAddr>) -> Result<Vec<IpAddr>, Box<dyn std::error::Error>> {
+pub fn ping_scan(
+    hosts: Vec<IpAddr>,
+    timeout: Duration,
+    ping_delay: Duration,
+) -> Result<Vec<IpAddr>, Box<dyn std::error::Error>> {
     let results = Arc::new(Mutex::new(Vec::<IpAddr>::new()));
 
     // Create a receiver channel for ICMP packets
@@ -50,7 +53,7 @@ pub fn ping_scan(hosts: Vec<IpAddr>) -> Result<Vec<IpAddr>, Box<dyn std::error::
             if finish_sending_time.is_some() {
                 let delay = finish_sending_time.unwrap().elapsed();
                 // pb.as_ref().unwrap().set_position(delay.as_millis() as u64);
-                if delay >= TIMEOUT {
+                if delay >= timeout {
                     // pb.unwrap().finish_and_clear();
                     break;
                 }
@@ -59,7 +62,7 @@ pub fn ping_scan(hosts: Vec<IpAddr>) -> Result<Vec<IpAddr>, Box<dyn std::error::
             {
                 finish_sending_time = Some(Instant::now());
                 // pb = Some(ProgressBar::new(TIMEOUT.as_millis() as u64));
-                println!("Waiting {} seconds for timeout...", TIMEOUT.as_secs())
+                println!("Waiting {} seconds for timeout...", timeout.as_secs_f32())
             }
             // if time.is_some() {
             //     println!("{}", time.unwrap().elapsed().as_millis())
@@ -126,7 +129,7 @@ pub fn ping_scan(hosts: Vec<IpAddr>) -> Result<Vec<IpAddr>, Box<dyn std::error::
             if (i % 16) == 0 {
                 pb.inc(16);
             }
-            thread::sleep(SEND_DELAY_NANOS);
+            thread::sleep(ping_delay);
         }
         pb.finish_and_clear();
 

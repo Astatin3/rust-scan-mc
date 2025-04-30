@@ -21,7 +21,12 @@ fn std_to_pnet_ipv4(previous: &IpAddr) -> Ipv4Addr {
 }
 
 // Main scanning function
-pub fn tcp_scan(targets: Vec<IpAddr>, ports: Vec<i32>, timeout: Duration) -> Vec<PortScanResult> {
+pub fn tcp_scan(
+    targets: Vec<IpAddr>,
+    ports: Vec<i32>,
+    timeout: Duration,
+    tcp_delay: Duration,
+) -> Vec<PortScanResult> {
     // Search for VPN connection and fall back to regular
     let interface = datalink::interfaces()
         .into_iter()
@@ -89,7 +94,7 @@ pub fn tcp_scan(targets: Vec<IpAddr>, ports: Vec<i32>, timeout: Duration) -> Vec
             {
                 finish_sending_time = Some(Instant::now());
                 // pb = Some(ProgressBar::new(TIMEOUT.as_millis() as u64));
-                println!("Waiting {} seconds for timeout...", timeout.as_secs())
+                println!("Waiting {} seconds for timeout...", timeout.as_secs_f32())
             }
 
             // println!("loop");
@@ -185,7 +190,7 @@ pub fn tcp_scan(targets: Vec<IpAddr>, ports: Vec<i32>, timeout: Duration) -> Vec
             ));
             pb.inc(1);
 
-            thread::sleep(Duration::from_micros(100));
+            thread::sleep(tcp_delay);
         }
     }
 

@@ -21,3 +21,4 @@ sha256 = "1.6.0"
 rayon = "1.10.0"
 futures = "0.3.31"
 chrono = "0.4.40"
+clap = { version = "4.5.37", features = ["derive"] }
