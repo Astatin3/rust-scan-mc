@@ -23,7 +23,7 @@ fn std_to_pnet_ipv4(previous: &IpAddr) -> Ipv4Addr {
 // Main scanning function
 pub fn tcp_scan(
     targets: Vec<IpAddr>,
-    ports: Vec<i32>,
+    ports: &Vec<u16>,
     timeout: Duration,
     tcp_delay: Duration,
 ) -> Vec<PortScanResult> {
@@ -151,7 +151,7 @@ pub fn tcp_scan(
     let sender_finished_sending_time = Arc::clone(&finished_sending_time);
     let sender_port_count = Arc::clone(&port_count);
     for target in &targets {
-        for port in &ports {
+        for port in ports {
             // let source_ip = Ipv4Addr::from_bits(random_range(0..=(0xffffffff)));
             let source_port: u16 = random_range(1..=65535);
             // println!("{}", source_ip.to_string());

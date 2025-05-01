@@ -3,7 +3,8 @@ use std::{
     str::FromStr,
 };
 
-use rand::{rng, seq::SliceRandom};
+use pnet::ipnetwork::IpNetwork;
+use rand::{Rng, rng, seq::SliceRandom};
 
 // static MAX_HOSTS: u32 = 1024;
 
@@ -118,4 +119,40 @@ fn parse_ip_range(range: &str, ips: &mut Vec<IpAddr>) -> Result<(), Box<dyn std:
     }
 
     Ok(())
+}
+
+pub fn generate_random_ipv4_addresses(count: usize, excluded_cidrs: Vec<&str>) -> Vec<IpAddr> {
+    let mut result = Vec::with_capacity(count);
+    let mut rng = rand::rng();
+
+    // Parse the CIDR blocks
+    let excluded_networks: Vec<IpNetwork> = excluded_cidrs
+        .iter()
+        .filter_map(|cidr| IpNetwork::from_str(cidr).ok())
+        .collect();
+
+    while result.len() < count {
+        // Generate a random IPv4 address
+        let ip = Ipv4Addr::new(
+            rng.random_range(0..=255),
+            rng.random_range(0..=255),
+            rng.random_range(0..=255),
+            rng.random_range(0..=255),
+        );
+
+        // Convert to IpAddr for use with IpNetwork
+        let ip_addr = IpAddr::V4(ip);
+
+        // Check if IP is in any of the excluded networks
+        let is_excluded = excluded_networks
+            .iter()
+            .any(|network| network.contains(ip_addr));
+
+        if !is_excluded {
+            // println!("{}", ip_addr);
+            result.push(ip_addr);
+        }
+    }
+
+    result
 }
