@@ -1,10 +1,15 @@
 use std::{
+    error::Error,
+    fs::File,
+    io::{BufRead, BufReader},
     net::{IpAddr, Ipv4Addr},
+    path::Path,
     str::FromStr,
 };
 
 use pnet::ipnetwork::IpNetwork;
 use rand::{Rng, rng, seq::SliceRandom};
+use regex::Regex;
 
 // static MAX_HOSTS: u32 = 1024;
 
@@ -155,4 +160,34 @@ pub fn generate_random_ipv4_addresses(count: usize, excluded_cidrs: Vec<&str>) -
     }
 
     result
+}
+
+pub fn extract_ipv4_from_file<P: AsRef<Path>>(filename: P) -> Result<Vec<IpAddr>, Box<dyn Error>> {
+    // Open the file
+    let file = File::open(filename)?;
+    let reader = BufReader::new(file);
+
+    // IPv4 regex pattern: matches numbers 0-255 separated by periods
+    let ipv4_pattern = r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b";
+    let re = Regex::new(ipv4_pattern).expect("Invalid regex pattern");
+
+    let mut ip_addresses = Vec::new();
+
+    // Process each line in the file
+    for line in reader.lines() {
+        let line = line?;
+
+        // Find all matches in the current line
+        for ip_str in re.find_iter(&line) {
+            // Parse the found string as an IpAddr
+            if let Ok(ip) = ip_str.as_str().parse::<IpAddr>() {
+                // Only collect IPv4 addresses (though our regex already ensures this)
+                if ip.is_ipv4() {
+                    ip_addresses.push(ip);
+                }
+            }
+        }
+    }
+
+    Ok(ip_addresses)
 }

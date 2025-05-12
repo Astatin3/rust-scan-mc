@@ -6,6 +6,7 @@ use std::{
 };
 
 use chrono::{DateTime, Utc};
+use rand::seq::IteratorRandom;
 use regex::Regex;
 use rocksdb::{Cache, ColumnFamily, DB, IteratorMode, Options, WriteBatch};
 use serde::{Deserialize, Serialize};
@@ -448,6 +449,38 @@ impl ResultDatabase {
         }
 
         Ok(matching_keys)
+    }
+
+    pub fn get_random_result(&self) -> Result<DatabaseResult, rocksdb::Error> {
+        let db = Arc::new(DB::open_cf(&self.options, &self.path, &self.columns)?);
+        let cfs = vec![
+            db.cf_handle(&self.columns[0]).unwrap(),
+            db.cf_handle(&self.columns[1]).unwrap(),
+            db.cf_handle(&self.columns[2]).unwrap(),
+            db.cf_handle(&self.columns[3]).unwrap(),
+            db.cf_handle(&self.columns[4]).unwrap(),
+            db.cf_handle(&self.columns[5]).unwrap(),
+            db.cf_handle(&self.columns[6]).unwrap(),
+            db.cf_handle(&self.columns[7]).unwrap(),
+            db.cf_handle(&self.columns[8]).unwrap(),
+            db.cf_handle(&self.columns[9]).unwrap(),
+            db.cf_handle(&self.columns[10]).unwrap(),
+            db.cf_handle(&self.columns[11]).unwrap(),
+            db.cf_handle(&self.columns[12]).unwrap(),
+        ];
+
+        let iter = db.iterator_cf(cfs[0], IteratorMode::Start);
+        let (key_bytes, _value_bytes) = iter
+            .choose(&mut rand::rng())
+            .expect("Failed to aquire random")
+            .expect("Failed to aquire random");
+
+        let key_str = std::str::from_utf8(&key_bytes).expect("Failed to parse key str");
+        let row = self
+            .fetch_row(&db, key_str, &cfs)
+            .expect("Failed to fetch row");
+
+        Ok(row)
     }
 
     pub fn search_substring_in_column_regex(
