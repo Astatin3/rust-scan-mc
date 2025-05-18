@@ -95,7 +95,7 @@ pub fn scan_services(
 
     // Create a thread for each chunk of IPs
     // let chunks = split_ips_into_chunks(port_scan_results, num_threads);
-    for i in 0..=min(num_threads, host_port_count) {
+    for _ in 0..=min(num_threads, host_port_count) {
         // println!("Thread {},{}", i, chunk.len());
         // let chunk_hosts = chunk.clone();
         let thread_hosts = Arc::clone(&host_port);
@@ -134,7 +134,8 @@ pub fn scan_services(
 
                 if let Some(result) = result {
                     let mut results_guard = thread_results.lock().unwrap();
-                    println!("{}, {}", i, result.to_string());
+                    thread_pb.set_message(format!("{} Found", results_guard.len()));
+                    // println!("{}, {}", i, result.to_string());
                     results_guard.push(result);
                     std::mem::drop(results_guard);
                 }
@@ -155,12 +156,15 @@ pub fn scan_services(
         handle.join().unwrap();
     }
 
-    pb.clone().finish_with_message("Finished!");
-
-    Arc::try_unwrap(results)
+    let results = Arc::try_unwrap(results)
         .expect("Arc still has multiple owners")
         .into_inner()
-        .expect("Mutex poisoned")
+        .expect("Mutex poisoned");
+
+    pb.clone()
+        .finish_with_message(format!("Finished! {} Found", results.len()));
+
+    results
     // .into_iter()
     // .map(|a| {
     //     println!("{:?}", a);

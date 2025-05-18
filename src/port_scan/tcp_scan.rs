@@ -65,12 +65,22 @@ pub fn tcp_scan(
         }
     }
 
+    let pb = Arc::new(
+        ProgressBar::new((targets.len() * ports.len()) as u64).with_style(
+            ProgressStyle::with_template(
+                "[{msg}] {wide_bar:.cyan/blue} {pos}/{len} ({eta_precise})",
+            )
+            .unwrap(),
+        ),
+    );
+
     let finished_sending_time = Arc::new(AtomicBool::new(false));
     let port_count = Arc::new(AtomicU32::new(0));
 
     let receiver_results = Arc::clone(&results);
     let receiver_finished_sending_time = Arc::clone(&finished_sending_time);
     let receiver_port_count = Arc::clone(&port_count);
+    let reciever_pb = Arc::clone(&pb);
     let receiver_handle = thread::spawn(move || {
         let mut finish_sending_time: Option<Instant> = None;
 
@@ -93,8 +103,11 @@ pub fn tcp_scan(
                 && receiver_finished_sending_time.load(std::sync::atomic::Ordering::Relaxed)
             {
                 finish_sending_time = Some(Instant::now());
-                // pb = Some(ProgressBar::new(TIMEOUT.as_millis() as u64));
-                println!("Waiting {} seconds for timeout...", timeout.as_secs_f32())
+
+                reciever_pb.set_message(format!(
+                    "Waiting {} seconds for timeout...",
+                    timeout.as_secs_f32()
+                ));
             }
 
             // println!("loop");
@@ -126,11 +139,6 @@ pub fn tcp_scan(
 
         // for (packet, addr) in tmp_results {}
     });
-
-    let pb = ProgressBar::new((targets.len() * ports.len()) as u64).with_style(
-        ProgressStyle::with_template("[{msg}] {wide_bar:.cyan/blue} {pos}/{len} ({eta_precise})")
-            .unwrap(),
-    );
 
     // println!("{:?}", interface.ips);
 
@@ -194,7 +202,6 @@ pub fn tcp_scan(
         }
     }
 
-    pb.finish_with_message("Finished!");
     sender_finished_sending_time.swap(true, std::sync::atomic::Ordering::Relaxed);
     // Wait for receiver to finish
     // thread::sleep(timeout);
@@ -202,18 +209,24 @@ pub fn tcp_scan(
 
     // Convert results to the return format
     let results_map = results.lock().unwrap();
-    targets
+    let mut total_ips = 0;
+    let result = targets
         .iter()
         .map(|ip| {
             let mut open_ports = results_map.get(ip).cloned().unwrap_or_default();
             open_ports.sort();
             open_ports.dedup();
+            total_ips += open_ports.len();
             PortScanResult {
                 ip: *ip,
                 open_ports,
             }
         })
-        .collect()
+        .collect();
+
+    pb.finish_with_message(format!("Finished! {:?} ports", total_ips));
+
+    result
 }
 
 fn send_tcp_packet(tx: &mut TransportSender, tcp_header: MutableTcpPacket<'_>, target: &IpAddr) {

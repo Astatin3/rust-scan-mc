@@ -109,6 +109,10 @@ impl DatabaseResult {
         }
         None
     }
+
+    pub fn sameas(&self, other: &DatabaseResult) -> bool {
+        return self.port == other.port && self.ip == other.ip;
+    }
 }
 
 pub fn join_nums(nums: &Vec<i32>, sep: &str) -> String {
@@ -238,7 +242,7 @@ impl ResultDatabase {
 
     pub fn add_data_row(
         &self,
-        results: Vec<DatabaseResult>,
+        results: &Vec<DatabaseResult>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut string_rows = Vec::with_capacity(results.len()); // Pre-allocate capacity
 
@@ -251,7 +255,7 @@ impl ResultDatabase {
 
     pub fn save_rows(
         &self,
-        string_rows: Vec<DatabaseResult>,
+        string_rows: Vec<&DatabaseResult>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let db = Arc::new(DB::open_cf(&self.options, &self.path, &self.columns)?);
 
@@ -273,7 +277,7 @@ impl ResultDatabase {
         let length = string_rows.len();
 
         // Split the rows into chunks for parallel processing
-        let chunks: Vec<Vec<DatabaseResult>> = string_rows
+        let chunks: Vec<Vec<&DatabaseResult>> = string_rows
             .chunks(BATCH_SIZE)
             .map(|chunk| chunk.to_vec())
             .collect();
@@ -290,7 +294,7 @@ impl ResultDatabase {
 
                     for row in chunk {
                         let key = row.get_addr();
-                        println!("{}", key);
+                        // println!("{}", key);
                         let key = key.as_bytes();
 
                         batch.put_cf(cf_addr, key, key);

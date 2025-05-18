@@ -16,7 +16,7 @@ use rand::{
     seq::{IteratorRandom, SliceRandom},
 };
 use untitled::{
-    database::ResultDatabase,
+    database::{DatabaseResult, ResultDatabase},
     online_scan,
     parse_ip_range::{self, extract_ipv4_from_file, generate_random_ipv4_addresses},
     port_scan::tcp_scan,
@@ -76,7 +76,26 @@ enum Commands {
         query: Vec<String>,
         /// Select N random results
         #[arg(short, long, default_value_t = 0)]
-        random: usize,
+        num: usize,
+
+        /// Scan results again before printing
+        #[arg(short, long, default_value_t = false)]
+        rescan: bool,
+        /// (For Rescan only) Size of block of IPs to scan
+        #[arg(short, long, default_value_t = 4096)]
+        batch_size: usize,
+        /// (For Rescan only) The top N most common ports to scan
+        #[arg(short, long, default_value_t = 150)]
+        n_ports: usize,
+        /// (For Rescan only) Timeout for requests
+        #[arg(short, long, default_value_t = 3000)]
+        timeout_ms: u64,
+        /// (For Rescan only) Delay between icmp echo requests
+        #[arg(short, long, default_value_t = 80)]
+        ping_delay_micros: u64,
+        /// (For Rescan only) Delay between tcp syn packets
+        #[arg(short, long, default_value_t = 100)]
+        syn_tcp_delay_micros: u64,
     },
 }
 
@@ -319,30 +338,74 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 },
             }
         }
-        Commands::Search { query, random } => {
+        Commands::Search {
+            query,
+            num,
+            rescan,
+
+            batch_size,
+            n_ports,
+            timeout_ms,
+            ping_delay_micros,
+            syn_tcp_delay_micros,
+        } => {
             let start = Instant::now();
             if let Ok(query) = query::search(query) {
                 let results = database.search(query);
                 if let Ok(results) = results {
                     let total_len = results.len();
-                    if random != 0 {
-                        let local_len = min(random, total_len);
-                        let results = results.iter().choose_multiple(&mut rng(), local_len);
-                        for result in results {
-                            println!("{}", result.to_string());
-                        }
-                        println!(
-                            "{} results in {}ms, selected {}",
-                            total_len,
-                            start.elapsed().as_millis(),
-                            local_len
-                        );
+
+                    let results = if num != 0 {
+                        results
+                            .into_iter()
+                            .choose_multiple(&mut rng(), min(num, total_len))
                     } else {
-                        for result in results {
-                            println!("{}", result.to_string());
-                        }
-                        println!("{} results in {}ms", total_len, start.elapsed().as_millis());
+                        results
+                    };
+
+                    let results = if rescan {
+                        let scan_results = scan(
+                            batch_size,
+                            &database,
+                            results
+                                .iter()
+                                .map(|r| IpAddr::from_str(&r.ip).unwrap())
+                                .collect::<Vec<IpAddr>>(),
+                            ports::PORTS[0..n_ports].to_vec(),
+                            Duration::from_millis(timeout_ms),
+                            Duration::from_micros(ping_delay_micros),
+                            Duration::from_micros(syn_tcp_delay_micros),
+                        )?;
+
+                        // Filter out only ips and ports which are the same
+                        scan_results
+                            .into_iter()
+                            .filter_map(|curresult| {
+                                for prevresult in &results {
+                                    if prevresult.sameas(&curresult) {
+                                        return Some(curresult);
+                                    }
+                                }
+
+                                None
+                            })
+                            .collect::<Vec<DatabaseResult>>()
+                    } else {
+                        results
+                    };
+
+                    let len = results.len();
+
+                    for result in results {
+                        println!("{}", result.to_string());
                     }
+
+                    println!(
+                        "{} results in {}ms, selected {}",
+                        total_len,
+                        start.elapsed().as_millis(),
+                        len
+                    );
                 }
             }
         }
@@ -359,12 +422,13 @@ fn scan(
     timeout: Duration,
     ping_delay: Duration,
     tcp_delay: Duration,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<Vec<DatabaseResult>, Box<dyn std::error::Error>> {
     let start_time = Instant::now();
     let mut server_count = 0;
 
     let chunks = hosts.chunks(batch_size);
     let num_chunks = chunks.len();
+    let mut results: Vec<DatabaseResult> = Vec::new();
     for (i, hosts) in chunks.enumerate() {
         let hosts = hosts.to_vec();
         let length = hosts.len();
@@ -383,10 +447,12 @@ fn scan(
         let tcp_results = tcp_scan::tcp_scan(up_hosts, &ports, timeout, tcp_delay);
         println!("Finished port scan");
 
-        let service_results = scan_services(tcp_results, min(50, up_len), timeout);
+        let mut service_results = scan_services(tcp_results, min(50, up_len), timeout);
         println!("Finished service scan");
         server_count += service_results.len();
-        let _ = database.add_data_row(service_results);
+        let _ = database.add_data_row(&service_results)?;
+
+        results.append(&mut service_results);
     }
 
     println!("Total Servers: {}", server_count);
@@ -394,5 +460,5 @@ fn scan(
     println!("Total Elapsed: {} min", elapsed);
     println!("Rate: {} servers/min", (server_count as f32 / elapsed));
 
-    Ok(())
+    Ok(results)
 }
